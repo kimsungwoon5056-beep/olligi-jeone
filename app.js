@@ -11,23 +11,48 @@
     img: null, buffer: null, W: 0, H: 0, k: 1, // k: 원본 → 분석 화면 배율
     work: document.createElement('canvas'),
     findings: [], gps: null, meta: null, qrFound: [], ocrText: '',
-    style: 'mosaic', drag: null, busy: false, lastBlob: null,
+    style: 'mosaic', drag: null, busy: false, lastBlob: null, hover: null, preview: false, skewDeg: 0,
   };
 
   // ---------- AI 모델 (처음 한 번만 받고 다시 씀) ----------
-  let ocrP = null, faceP = null, ocrProgress = '';
-  function getOcr() {
+  // 글자 읽기 일꾼을 CPU 코어 수에 맞춰 1~3개 띄워, 여러 판을 동시에 읽는다.
+  let ocrP = null, faceP = null;
+  const OCR_N = (() => {
+    const cores = navigator.hardwareConcurrency || 2;
+    const mem = navigator.deviceMemory || 8;
+    return mem <= 3 ? 1 : Math.max(1, Math.min(3, Math.floor(cores / 2)));
+  })();
+  function getOcrPool() {
     if (!ocrP) {
-      ocrP = Tesseract.createWorker('kor+eng', 1, {
-        logger: m => {
-          if (m.status && m.progress != null && !m.status.includes('recogniz')) {
-            ocrProgress = `모델 받는 중 ${Math.round(m.progress * 100)}%`;
-            setStep('ocr', ocrProgress);
-          }
-        },
-      });
+      const logger = m => {
+        if (m.status && m.progress != null && !m.status.includes('recogniz')) {
+          setModel(`글자 읽기 모델 받는 중 ${Math.round(m.progress * 100)}%`);
+        }
+      };
+      ocrP = (async () => {
+        const first = await Tesseract.createWorker('kor+eng', 1, { logger });
+        const rest = await Promise.all(Array.from({ length: OCR_N - 1 }, () => Tesseract.createWorker('kor+eng', 1)));
+        return [first, ...rest];
+      })();
     }
     return ocrP;
+  }
+  // 일꾼들에게 일을 나눠 주고, 들어온 순서대로 결과를 돌려준다
+  async function ocrAll(jobs, onDone) {
+    const pool = await getOcrPool();
+    const out = new Array(jobs.length);
+    let next = 0, done = 0;
+    await Promise.all(pool.map(async w => {
+      while (next < jobs.length) {
+        const i = next++;
+        await w.setParameters({ tessedit_pageseg_mode: jobs[i].psm });
+        const { data } = await w.recognize(jobs[i].canvas);
+        if (jobs[i].back) mapLines(data, jobs[i].back);
+        out[i] = data;
+        onDone(++done, jobs.length);
+      }
+    }));
+    return out;
   }
   function getFace() {
     if (!faceP) {
@@ -64,11 +89,38 @@
   function loadImage(src) {
     return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
   }
-  async function loadFromDataUrl(url) { start(await loadImage(url), dataUrlToBuffer(url)); }
+  function showMsg(t) { const m = $('#pickMsg'); m.textContent = t; m.classList.toggle('hidden', !t); }
+  async function loadFromDataUrl(url) {
+    try { showMsg(''); start(await loadImage(url), dataUrlToBuffer(url)); }
+    catch (e) { showMsg('사진을 열 수 없어요. 다른 사진을 골라 주세요.'); }
+  }
   async function loadFromFile(file) {
-    const buf = await file.arrayBuffer();
-    const url = URL.createObjectURL(file);
-    start(await loadImage(url), buf);
+    try {
+      showMsg('');
+      const buf = await file.arrayBuffer();
+      const url = URL.createObjectURL(file);
+      start(await loadImage(url), buf);
+    } catch (e) {
+      showMsg('이 사진은 열 수 없어요. JPG나 PNG 사진을 골라 주세요. (아이폰 HEIC 사진은 카메라 설정에서 ‘높은 호환성’을 고르면 돼요)');
+    }
+  }
+
+  // ---------- AI 준비 상태와 '바깥으로 나간 요청' 세기 ----------
+  function setModel(text, state) {
+    const m = $('#modelStatus');
+    m.textContent = text;
+    m.className = 'model ' + (state || '');
+  }
+  let readyAt = null;
+  function outgoingAfterReady() {
+    if (readyAt == null) return null;
+    return performance.getEntriesByType('resource')
+      .filter(e => e.startTime > readyAt && /^https?:/.test(e.name)).length;
+  }
+  function renderNet() {
+    const n = outgoingAfterReady();
+    $('#netCount').textContent = n == null ? 'AI 준비 뒤부터 셀게요' : `${n}건`;
+    $('#netState').textContent = navigator.onLine ? '연결됨' : '끊김 (그래도 분석은 돼요)';
   }
 
   // ---------- 단계 표시와 시간 재기 ----------
@@ -80,9 +132,20 @@
     ['agent', '개인정보 판단·위험 설명'],
   ];
   let times = {};
+  // 전체 진행 막대: 단계마다 걸리는 시간 비율로 나눈다 (글자 읽기가 대부분)
+  const WEIGHT = { meta: 0.03, ocr: 0.82, face: 0.08, qr: 0.04, agent: 0.03 };
+  let prog = {};
+  function setBar(id, frac) {
+    prog[id] = frac;
+    const p = Object.keys(WEIGHT).reduce((a, k) => a + WEIGHT[k] * (prog[k] || 0), 0);
+    $('#barFill').style.width = Math.round(p * 100) + '%';
+    $('#bar').setAttribute('aria-valuenow', Math.round(p * 100));
+  }
   function resetSteps() {
-    times = {};
+    times = {}; prog = {};
     $('#steps').innerHTML = STEPS.map(([id, name]) => `<li id="st-${id}"><span>${name}</span><span class="st">기다리는 중</span></li>`).join('');
+    $('#bar').classList.remove('hidden');
+    setBar('meta', 0);
   }
   function setStep(id, text, done) {
     const li = $('#st-' + id);
@@ -90,6 +153,7 @@
     const st = li.querySelector('.st');
     st.textContent = text;
     st.className = 'st' + (done ? ' done' : '');
+    if (done) setBar(id, 1);
   }
   async function timed(id, fn) {
     setStep(id, '진행 중…');
@@ -113,7 +177,8 @@
     const total = Object.values(times).filter(v => v != null).reduce((a, b) => a + b, 0);
     rows.push(`<tr><th>합계</th><th>${fmtMs(total)}</th></tr>`);
     $('#perf').innerHTML = '<tr><th>단계</th><th>시간</th></tr>' + rows.join('');
-    $('#device').textContent = `측정 기기: CPU 코어 ${navigator.hardwareConcurrency || '?'}개 · 사진 ${S.W}×${S.H} · 처음 실행에는 모델 받는 시간이 들어가요.`;
+    $('#device').textContent = `측정 기기: CPU 코어 ${navigator.hardwareConcurrency || '?'}개 · 글자 읽기 일꾼 ${OCR_N}개 동시 실행 · 사진 ${S.W}×${S.H}${S.skewDeg && Math.abs(S.skewDeg) >= 2 ? ` · 기울기 ${Math.abs(S.skewDeg)}° 바로잡음` : ''} · 처음 실행에는 모델 받는 시간이 들어가요.`;
+    renderNet();
   }
 
   // ---------- 분석 ----------
@@ -124,7 +189,8 @@
     S.k = Math.min(1, WORK_MAX / Math.max(S.W, S.H));
     S.work.width = Math.round(S.W * S.k); S.work.height = Math.round(S.H * S.k);
     S.work.getContext('2d').drawImage(img, 0, 0, S.work.width, S.work.height);
-    S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = '';
+    S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = ''; S.hover = null; S.preview = false; S.skewDeg = 0;
+    $('#previewToggle').checked = false;
     $('#workCard').classList.remove('hidden');
     $('#report').classList.add('hidden');
     $('#findWrap').classList.add('hidden');
@@ -155,27 +221,36 @@
     // 2) 글자 읽기 → 3) 얼굴 → 4) QR
     // 한 번에 잘 안 읽히는 글자(말풍선, 색 바탕, 흰 글씨 표지판)를 놓치지 않으려고 네 가지로 읽고 합친다.
     //  1) 사진 그대로  2) 진한 글자를 살린 판  3) 밝은 글자를 살린 판  4) 사진 그대로 + 글자 덩어리 자동 찾기
+    //  사진이 기울어 있으면(2도 이상) 똑바로 돌린 판으로 두 번 더 읽는다.
+    let deskew = null;
     const ocr = await timed('ocr', async () => {
-      const w = await getOcr();
-      const passes = [
-        [S.work, '6'], [adaptive(S.work, false), '6'], [adaptive(S.work, true), '6'], [S.work, '3'],
+      const dark = adaptive(S.work, false);
+      const angle = estimateSkew(dark);
+      S.skewDeg = Math.round(angle * 180 / Math.PI * 10) / 10;
+      const jobs = [
+        { canvas: S.work, psm: '6' }, { canvas: dark, psm: '6' },
+        { canvas: adaptive(S.work, true), psm: '6' }, { canvas: S.work, psm: '3' },
       ];
-      const out = [];
-      for (let i = 0; i < passes.length; i++) {
-        setStep('ocr', `읽는 중 ${i + 1}/${passes.length}`);
-        await w.setParameters({ tessedit_pageseg_mode: passes[i][1] });
-        const { data } = await w.recognize(passes[i][0]);
-        out.push(data);
+      if (Math.abs(S.skewDeg) >= 2) {
+        deskew = rotateCanvas(S.work, angle);
+        jobs.push({ canvas: deskew.canvas, psm: '6', back: deskew.back },
+          { canvas: adaptive(deskew.canvas, false), psm: '6', back: deskew.back });
       }
-      return out;
+      const tilt = deskew ? ` · 기울기 ${Math.abs(S.skewDeg)}° 바로잡음` : '';
+      setStep('ocr', `읽는 중 0/${jobs.length}${tilt}`);
+      return ocrAll(jobs, (d, n) => { setStep('ocr', `읽는 중 ${d}/${n}${tilt}`); setBar('ocr', d / n); });
     });
     const faces = await timed('face', async () => {
       const fd = await getFace();
-      return fd.detect(S.work).detections || [];
+      return detectFaces(fd, S.work);
     });
     let bars = [];
     const qr = await timed('qr', async () => {
       bars = findBarcodes(S.work);
+      if (deskew) {
+        findBarcodes(deskew.canvas).map(b => mapBox(b, deskew.back))
+          .forEach(b => { if (!bars.some(o => overlap(o, b) > 0.4)) bars.push(b); });
+      }
       const id = S.work.getContext('2d').getImageData(0, 0, S.work.width, S.work.height);
       return jsQR(id.data, id.width, id.height, { inversionAttempts: 'dontInvert' });
     });
@@ -197,10 +272,8 @@
         });
         S.ocrText = textLines.join('\n');
       }
-      (faces || []).forEach(d => {
-        const b = d.boundingBox;
-        found.push({ type: 'face', text: `확신 ${Math.round((d.categories?.[0]?.score || 0) * 100)}%`,
-          box: { x0: b.originX, y0: b.originY, x1: b.originX + b.width, y1: b.originY + b.height } });
+      (faces || []).forEach(f => {
+        found.push({ type: 'face', text: `확신 ${Math.round(f.score * 100)}%`, box: f.box });
       });
       if (qr && qr.location) {
         const L = qr.location;
@@ -217,6 +290,85 @@
     renderAll();
     renderPerf();
     S.busy = false;
+  }
+
+  // ---------- 기울기 바로잡기 ----------
+  // 글자 점들을 여러 각도로 돌려 보며, 가로줄이 가장 또렷하게 모이는 각도를 찾는다(투영 프로파일).
+  function estimateSkew(bin) {
+    const sc = Math.min(1, 640 / Math.max(bin.width, bin.height));
+    const W = Math.round(bin.width * sc), H = Math.round(bin.height * sc);
+    const t = document.createElement('canvas'); t.width = W; t.height = H;
+    const tg = t.getContext('2d'); tg.drawImage(bin, 0, 0, W, H);
+    const d = tg.getImageData(0, 0, W, H).data;
+    const xs = [], ys = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (d[(y * W + x) * 4] < 128) { xs.push(x - W / 2); ys.push(y - H / 2); }
+    }
+    if (xs.length < 200) return 0;
+    const step = Math.max(1, Math.floor(xs.length / 30000));
+    const R = Math.ceil(Math.hypot(W, H) / 2) + 2;
+    const score = a => {
+      const s = Math.sin(a), c = Math.cos(a), bins = new Float32Array(2 * R + 1);
+      for (let i = 0; i < xs.length; i += step) bins[Math.round(xs[i] * s + ys[i] * c) + R]++;
+      let v = 0; for (let k = 0; k < bins.length; k++) v += bins[k] * bins[k];
+      return v;
+    };
+    const rad = Math.PI / 180;
+    let best = 0, bestS = score(0);
+    for (let deg = -20; deg <= 20; deg += 1) { const v = score(deg * rad); if (v > bestS) { bestS = v; best = deg * rad; } }
+    const c0 = best;
+    for (let deg = -1; deg <= 1; deg += 0.25) { const a = c0 + deg * rad, v = score(a); if (v > bestS) { bestS = v; best = a; } }
+    return best;
+  }
+  // 캔버스를 a만큼 돌린 새 캔버스와, 돌린 좌표 → 원래 좌표로 되돌리는 함수
+  function rotateCanvas(src, a) {
+    const W = src.width, H = src.height, c = Math.cos(a), s = Math.sin(a);
+    const RW = Math.ceil(Math.abs(W * c) + Math.abs(H * s)), RH = Math.ceil(Math.abs(W * s) + Math.abs(H * c));
+    const out = document.createElement('canvas'); out.width = RW; out.height = RH;
+    const g = out.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, RW, RH);
+    g.translate(RW / 2, RH / 2); g.rotate(a); g.drawImage(src, -W / 2, -H / 2);
+    const back = (x, y) => {
+      const dx = x - RW / 2, dy = y - RH / 2;
+      return { x: dx * c + dy * s + W / 2, y: -dx * s + dy * c + H / 2 };
+    };
+    return { canvas: out, back };
+  }
+  function mapBox(b, back) {
+    const p = [back(b.x0, b.y0), back(b.x1, b.y0), back(b.x0, b.y1), back(b.x1, b.y1)];
+    return { x0: Math.min(...p.map(q => q.x)), y0: Math.min(...p.map(q => q.y)),
+      x1: Math.max(...p.map(q => q.x)), y1: Math.max(...p.map(q => q.y)) };
+  }
+  function mapLines(data, back) {
+    (data.lines || []).forEach(l => (l.words || []).forEach(w => { w.bbox = mapBox(w.bbox, back); }));
+  }
+
+  // ---------- 얼굴: 전체 + 4등분 조각에서 찾기 ----------
+  // 얼굴 모델은 작은 입력으로 보기 때문에, 단체 사진의 작은 얼굴은 조각을 크게 보여 줘야 잡힌다.
+  function detectFaces(fd, src) {
+    const all = [];
+    const run = (canvas, ox, oy, k) => {
+      (fd.detect(canvas).detections || []).forEach(d => {
+        const b = d.boundingBox;
+        all.push({ score: d.categories?.[0]?.score || 0,
+          box: { x0: ox + b.originX * k, y0: oy + b.originY * k, x1: ox + (b.originX + b.width) * k, y1: oy + (b.originY + b.height) * k } });
+      });
+    };
+    run(src, 0, 0, 1);
+    const W = src.width, H = src.height;
+    if (Math.max(W, H) >= 700) {
+      const tw = Math.round(W * 0.6), th = Math.round(H * 0.6);
+      for (const [ox, oy] of [[0, 0], [W - tw, 0], [0, H - th], [W - tw, H - th], [Math.round((W - tw) / 2), Math.round((H - th) / 2)]]) {
+        const t = document.createElement('canvas'); t.width = tw; t.height = th;
+        t.getContext('2d').drawImage(src, ox, oy, tw, th, 0, 0, tw, th);
+        run(t, ox, oy, 1);
+      }
+    }
+    // 겹치는 것은 확신이 높은 것 하나만 남긴다
+    all.sort((a, b) => b.score - a.score);
+    const keep = [];
+    all.forEach(f => { if (!keep.some(k => overlap(k.box, f.box) > 0.4)) keep.push(f); });
+    return keep;
   }
 
   // 겹친 넓이 ÷ 더 작은 상자 넓이 (작은 상자가 큰 상자 안에 들어 있으면 1)
@@ -310,28 +462,34 @@
   }
 
   // ---------- 그리기 ----------
-  function draw(previewMask) {
+  function draw() {
     const c = $('#view');
     c.width = S.work.width; c.height = S.work.height;
     const g = c.getContext('2d');
     g.drawImage(S.work, 0, 0);
-    if (previewMask) applyMasks(g, 1);
+    if (S.preview) applyMasks(g, 1);
     const lw = Math.max(2, c.width / 400);
+    const r = Math.max(11, c.width / 75);
     S.findings.forEach((f, i) => {
       const b = f.box, lv = Detect.TYPES[f.type].level;
-      g.lineWidth = lw * (f.selected ? 1.5 : 1);
-      g.strokeStyle = f.selected ? (LEVEL_COLOR[lv] || '#d93a3a') : '#9aa1b3';
+      const hot = S.hover === i, dim = S.hover != null && !hot;
+      const col = f.selected ? (LEVEL_COLOR[lv] || '#d93a3a') : '#9aa1b3';
+      g.globalAlpha = dim ? 0.35 : 1;
+      g.lineWidth = lw * (hot ? 2.5 : f.selected ? 1.5 : 1);
+      g.strokeStyle = col;
       g.setLineDash(f.selected ? [] : [lw * 4, lw * 3]);
       g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
       g.setLineDash([]);
-      const tag = `${i + 1} ${Detect.TYPES[f.type].label}`;
-      g.font = `bold ${Math.max(14, c.width / 60)}px "Malgun Gothic", sans-serif`;
-      const tw = g.measureText(tag).width + 10, th = Math.max(18, c.width / 48);
-      const ty = b.y0 - th < 0 ? b.y1 : b.y0 - th;
-      g.fillStyle = f.selected ? (LEVEL_COLOR[lv] || '#d93a3a') : '#9aa1b3';
-      g.fillRect(b.x0, ty, tw, th);
+      // 번호 동그라미만 상자 모서리에 붙인다 (이름은 아래 목록에서 보여 줌)
+      const cx = Math.max(r, b.x0), cy = Math.max(r, b.y0);
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+      g.lineWidth = Math.max(1.5, r / 6); g.strokeStyle = '#fff'; g.stroke();
       g.fillStyle = '#fff';
-      g.fillText(tag, b.x0 + 5, ty + th * 0.78);
+      g.font = `bold ${Math.round(r * 1.15)}px "Malgun Gothic", sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(String(i + 1), cx, cy + 1);
+      g.textAlign = 'start'; g.textBaseline = 'alphabetic';
+      g.globalAlpha = 1;
     });
     if (S.drag && S.drag.box) {
       const b = S.drag.box;
@@ -355,16 +513,21 @@
     S.findings.forEach((f, i) => {
       const t = Detect.TYPES[f.type];
       const li = document.createElement('li');
-      li.innerHTML = `<input type="checkbox" ${f.selected ? 'checked' : ''} aria-label="${t.label} 가리기">
-        <div><span class="kind">${i + 1}. ${t.label}</span><span class="pill l${t.level}">${['', '낮음', '중간', '높음'][t.level]}</span>
+      const col = f.selected ? (LEVEL_COLOR[t.level] || '#d93a3a') : '#9aa1b3';
+      li.innerHTML = `<label><input type="checkbox" ${f.selected ? 'checked' : ''} aria-label="${i + 1}번 ${t.label} 가리기">
+        <i class="no" style="background:${col}">${i + 1}</i>
+        <div><span class="kind">${t.label}</span><span class="pill l${t.level}">${['', '낮음', '중간', '높음'][t.level]}</span>
         ${f.text ? ` <span class="val">${esc(f.text)}</span>` : ''}
-        <span class="why">${esc(f.note ? f.note + '. ' + t.why : t.why)}</span></div>`;
+        <span class="why">${esc(f.note ? f.note + '. ' + t.why : t.why)}</span></div></label>`;
       li.querySelector('input').onchange = e => { f.selected = e.target.checked; renderAll(); };
+      const on = () => { S.hover = i; draw(); }, off = () => { S.hover = null; draw(); };
+      li.addEventListener('mouseenter', on); li.addEventListener('mouseleave', off);
+      li.addEventListener('focusin', on); li.addEventListener('focusout', off);
       list.appendChild(li);
     });
     if (S.gps) {
       const li = document.createElement('li');
-      li.innerHTML = `<input type="checkbox" checked disabled><div><span class="kind">숨은 위치 정보 (GPS)</span><span class="pill l3">높음</span>
+      li.innerHTML = `<input type="checkbox" checked disabled><i class="no" style="background:#d93a3a">📍</i><div><span class="kind">숨은 위치 정보 (GPS)</span><span class="pill l3">높음</span>
         <span class="why">사진에는 안 보이지만 파일 안에 있어요. 저장하면 항상 지워져요.</span></div>`;
       list.appendChild(li);
     }
@@ -477,7 +640,7 @@
       $('#camVideo').srcObject = stream;
       $('#cam').classList.remove('hidden');
     } catch (e) {
-      alert('카메라를 열 수 없어요. "내 사진 넣기"로 사진을 골라 주세요.');
+      showMsg('카메라를 열 수 없어요. "내 사진 넣기"로 사진을 골라 주세요. (폰에서는 "내 사진 넣기"를 누르면 카메라도 고를 수 있어요)');
     }
   }
   function closeCam() {
@@ -510,10 +673,29 @@
     const b = e.target.closest('button'); if (!b) return;
     S.style = b.dataset.v;
     [...$('#style').children].forEach(x => x.classList.toggle('on', x === b));
-    if (S.img) draw(true);
+    S.preview = true; $('#previewToggle').checked = true;
+    if (S.img) draw();
   });
+  $('#previewToggle').onchange = e => { S.preview = e.target.checked; if (S.img) draw(); };
+  $('#allOn').onclick = () => { S.findings.forEach(f => { f.selected = true; }); renderAll(); };
+  $('#allOff').onclick = () => { S.findings.forEach(f => { f.selected = false; }); renderAll(); };
+  $('#another').onclick = () => { $('#pick').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   // 미리 모델을 받아 두면 첫 분석이 빨라진다
-  setTimeout(() => { getOcr().catch(() => {}); getFace().catch(() => {}); }, 800);
+  setModel('AI 모델 준비 중… (처음 한 번만, 약 15MB)');
+  setTimeout(() => {
+    Promise.all([getOcrPool(), getFace()]).then(() => {
+      // 준비가 끝난 순간부터 이 페이지가 바깥으로 보내는 요청을 센다
+      readyAt = performance.now();
+      setModel('✓ AI 준비 완료 · 이제 인터넷을 끊어도 분석돼요 (비행기 모드로 직접 확인해 보세요)', 'ok');
+      renderNet();
+    }).catch(e => {
+      console.error(e);
+      setModel('AI 모델을 받지 못했어요. 인터넷 연결을 확인하고 새로 고침해 주세요.', 'err');
+    });
+  }, 300);
+  window.addEventListener('online', renderNet);
+  window.addEventListener('offline', renderNet);
+  setInterval(renderNet, 2000);
   // 개발 확인용
   window.__olligi = S;
   window.__olligiDebug = { findBarcodes, adaptive };

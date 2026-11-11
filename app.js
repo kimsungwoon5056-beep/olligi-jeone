@@ -2,8 +2,10 @@
 (function () {
   'use strict';
   const $ = s => document.querySelector(s);
-  const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
-  const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+  // 모든 AI 라이브러리와 모델 파일은 이 사이트 안(vendor/)에 있다. 다른 곳에서 받아 오지 않는다.
+  const abs = p => new URL(p, location.href).href;
+  const MP = abs('vendor/mediapipe');
+  const FACE_MODEL = abs('vendor/mediapipe/blaze_face_short_range.tflite');
   const WORK_MAX = 1600; // 분석용 긴 변 최대 길이
   const LEVEL_COLOR = { 3: '#d93a3a', 2: '#e07b00', 1: '#8a8f00' };
 
@@ -12,6 +14,8 @@
     work: document.createElement('canvas'),
     findings: [], gps: null, meta: null, qrFound: [], ocrText: '',
     style: 'mosaic', drag: null, busy: false, lastBlob: null, hover: null, preview: false, skewDeg: 0,
+    context: 'market', sceneOn: true, scene: null, photoNo: 0,
+    test: { on: false, photos: {} }, // 시험 모드 기록 (이 탭의 메모리에만 있음)
   };
 
   // ---------- AI 모델 (처음 한 번만 받고 다시 씀) ----------
@@ -30,8 +34,12 @@
         }
       };
       ocrP = (async () => {
-        const first = await Tesseract.createWorker('kor+eng', 1, { logger });
-        const rest = await Promise.all(Array.from({ length: OCR_N - 1 }, () => Tesseract.createWorker('kor+eng', 1)));
+        const opts = {
+          workerPath: abs('vendor/tesseract/worker.min.js'), corePath: abs('vendor/tesseract-core'),
+          langPath: abs('vendor/lang'), workerBlobURL: false,
+        };
+        const first = await Tesseract.createWorker('kor+eng', 1, { ...opts, logger });
+        const rest = await Promise.all(Array.from({ length: OCR_N - 1 }, () => Tesseract.createWorker('kor+eng', 1, opts)));
         return [first, ...rest];
       })();
     }
@@ -57,7 +65,7 @@
   function getFace() {
     if (!faceP) {
       faceP = (async () => {
-        const v = await import(MP + '/vision_bundle.mjs');
+        const v = await import(MP + '/vision_bundle.js');
         const files = await v.FilesetResolver.forVisionTasks(MP + '/wasm');
         return v.FaceDetector.createFromOptions(files, {
           baseOptions: { modelAssetPath: FACE_MODEL, delegate: 'CPU' },
@@ -114,8 +122,9 @@
   let readyAt = null;
   function outgoingAfterReady() {
     if (readyAt == null) return null;
+    // 이 사이트(자기 자신)가 아닌 곳으로 나간 요청만 센다
     return performance.getEntriesByType('resource')
-      .filter(e => e.startTime > readyAt && /^https?:/.test(e.name)).length;
+      .filter(e => e.startTime > readyAt && /^https?:/.test(e.name) && new URL(e.name).origin !== location.origin).length;
   }
   function renderNet() {
     const n = outgoingAfterReady();
@@ -128,12 +137,13 @@
     ['meta', '숨은 정보 읽기 (위치·기기)'],
     ['ocr', '글자 읽기 (OCR)'],
     ['face', '얼굴 찾기'],
+    ['scene', '장면 판단 AI'],
     ['qr', 'QR·바코드 찾기'],
     ['agent', '개인정보 판단·위험 설명'],
   ];
   let times = {};
   // 전체 진행 막대: 단계마다 걸리는 시간 비율로 나눈다 (글자 읽기가 대부분)
-  const WEIGHT = { meta: 0.03, ocr: 0.82, face: 0.08, qr: 0.04, agent: 0.03 };
+  const WEIGHT = { meta: 0.03, ocr: 0.72, face: 0.08, scene: 0.10, qr: 0.04, agent: 0.03 };
   let prog = {};
   function setBar(id, frac) {
     prog[id] = frac;
@@ -189,7 +199,7 @@
     S.k = Math.min(1, WORK_MAX / Math.max(S.W, S.H));
     S.work.width = Math.round(S.W * S.k); S.work.height = Math.round(S.H * S.k);
     S.work.getContext('2d').drawImage(img, 0, 0, S.work.width, S.work.height);
-    S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = ''; S.hover = null; S.preview = false; S.skewDeg = 0;
+    S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = ''; S.hover = null; S.preview = false; S.skewDeg = 0; S.scene = null;
     $('#previewToggle').checked = false;
     $('#workCard').classList.remove('hidden');
     $('#report').classList.add('hidden');
@@ -244,6 +254,15 @@
       const fd = await getFace();
       return detectFaces(fd, S.work);
     });
+    let scene = null;
+    if (S.sceneOn) {
+      scene = await timed('scene', async () => {
+        if (!sceneReady) setStep('scene', '장면 AI 받는 중… (처음 한 번만)');
+        return Scene.classify(S.work);
+      });
+    } else {
+      setStep('scene', '꺼 둠', true);
+    }
     let bars = [];
     const qr = await timed('qr', async () => {
       bars = findBarcodes(S.work);
@@ -284,7 +303,10 @@
           box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) } });
       }
       bars.forEach(b => found.push({ type: 'barcode', text: '', box: b }));
-      S.findings = found.map(f => ({ ...f, box: pad(f.box, f.type === 'face' ? 0.12 : 0.06), selected: true }));
+      S.findings = found.map(f => ({ ...f, box: pad(f.box, f.type === 'face' ? 0.12 : 0.06), selected: true, ai: true }));
+      S.scene = scene;
+      Detect.applyContext(S.findings, S.context);
+      S.photoNo++;
     });
 
     renderAll();
@@ -500,13 +522,21 @@
 
   function renderAll() {
     draw();
-    const rep = Detect.buildReport(S.findings, { gps: S.gps, meta: S.meta, qrFound: S.qrFound });
+    const rep = Detect.buildReport(S.findings, { gps: S.gps, meta: S.meta, qrFound: S.qrFound, context: S.context, scene: S.scene });
+    S.lastReport = rep;
     const n = S.findings.filter(f => f.selected).length + (S.gps ? 1 : 0);
     $('#banner').className = 'banner l' + rep.level;
     $('#banner').textContent = `${rep.label} · 가릴 곳 ${S.findings.filter(f => f.selected).length}개${S.gps ? ' + 숨은 위치 정보' : ''}`;
     $('#risks').innerHTML = '<div class="hint" style="margin:0 0 4px">🤖 AI가 판단한 "이 사진으로 남이 알 수 있는 것"</div>' +
-      rep.cards.map(c => `<div class="risk l${c.level}"><b>${esc(c.title)}</b><p>${esc(c.body)}</p></div>`).join('');
+      rep.cards.map(c => `<div class="risk l${c.level < 0 ? 'ctx' : c.level}"><b>${esc(c.title)}</b><p>${esc(c.body)}</p></div>`).join('');
+    // 장면 AI가 본 것 (위 3개를 막대로)
+    if (S.scene && S.scene.length) {
+      $('#sceneBox').innerHTML = '<b>🧠 장면 판단 AI가 본 이 사진</b>' + S.scene.slice(0, 3).map(s =>
+        `<div class="sc"><span>${esc(s.ko)}</span><i><em style="width:${Math.round(s.p * 100)}%"></em></i><span>${Math.round(s.p * 100)}%</span></div>`).join('');
+      $('#sceneBox').classList.remove('hidden');
+    } else $('#sceneBox').classList.add('hidden');
     $('#report').classList.remove('hidden');
+    renderTest();
 
     const list = $('#finds');
     list.innerHTML = '';
@@ -519,7 +549,7 @@
         <div><span class="kind">${t.label}</span><span class="pill l${t.level}">${['', '낮음', '중간', '높음'][t.level]}</span>
         ${f.text ? ` <span class="val">${esc(f.text)}</span>` : ''}
         <span class="why">${esc(f.note ? f.note + '. ' + t.why : t.why)}</span></div></label>`;
-      li.querySelector('input').onchange = e => { f.selected = e.target.checked; renderAll(); };
+      li.querySelector('input').onchange = e => { f.selected = e.target.checked; f.touched = true; renderAll(); };
       const on = () => { S.hover = i; draw(); }, off = () => { S.hover = null; draw(); };
       li.addEventListener('mouseenter', on); li.addEventListener('mouseleave', off);
       li.addEventListener('focusin', on); li.addEventListener('focusout', off);
@@ -569,7 +599,7 @@
         const hit = S.findings
           .filter(f => p.x >= f.box.x0 && p.x <= f.box.x1 && p.y >= f.box.y0 && p.y <= f.box.y1)
           .sort((a, b2) => area(a.box) - area(b2.box))[0];
-        if (hit) hit.selected = !hit.selected;
+        if (hit) { hit.selected = !hit.selected; hit.touched = true; }
       }
       renderAll();
     });
@@ -630,6 +660,100 @@
       : `✓ ${masked}곳을 가렸어요 · ✓ 저장한 파일을 다시 열어 보니 위치·기기 정보가 없어요`;
     const canShare = navigator.canShare && navigator.canShare({ files: [new File([blob], 'photo.jpg', { type: 'image/jpeg' })] });
     $('#shareBtn').classList.toggle('hidden', !canShare);
+    recordTest();
+  }
+
+  // ---------- F. 시험 모드: AI가 얼마나 맞았는지 사람이 고친 횟수로 잰다 ----------
+  // AI가 찾은 곳 중 사람이 뺀 곳 = 잘못 찾은 것, 사람이 직접 더한 곳 = AI가 놓친 것.
+  // 사진이 아니라 숫자만, 이 탭의 메모리에만 남긴다.
+  function recordTest() {
+    if (!S.test.on || !S.photoNo) return;
+    const ai = S.findings.filter(f => f.ai);
+    S.test.photos[S.photoNo] = {
+      found: ai.length,
+      wrong: ai.filter(f => !f.selected && f.touched).length,
+      missed: S.findings.filter(f => f.type === 'manual').length,
+    };
+    renderTest();
+  }
+  function testSummary() {
+    const ps = Object.values(S.test.photos);
+    const sum = k => ps.reduce((a, p) => a + p[k], 0);
+    const found = sum('found'), wrong = sum('wrong'), missed = sum('missed'), right = found - wrong;
+    const pct = (a, b) => (b ? Math.round(a / b * 100) + '%' : '-');
+    return { n: ps.length, found, wrong, missed, right,
+      precision: pct(right, found), recall: pct(right, right + missed) };
+  }
+  function renderTest() {
+    const box = $('#testBox');
+    if (!box) return;
+    if (!S.test.on) { box.classList.add('hidden'); return; }
+    const t = testSummary();
+    box.classList.remove('hidden');
+    $('#testTable').innerHTML = `<tr><td>시험한 사진</td><td>${t.n}장</td></tr>
+      <tr><td>AI가 찾은 곳</td><td>${t.found}곳</td></tr>
+      <tr><td>사람이 뺀 곳 (잘못 찾음)</td><td>${t.wrong}곳</td></tr>
+      <tr><td>사람이 직접 더한 곳 (AI가 놓침)</td><td>${t.missed}곳</td></tr>
+      <tr><th>맞게 찾은 비율</th><th>${t.precision}</th></tr>
+      <tr><th>놓치지 않은 비율</th><th>${t.recall}</th></tr>`;
+  }
+
+  // ---------- C. 소리로 읽어 주기 ----------
+  function speak() {
+    if (!('speechSynthesis' in window) || !S.lastReport) { showMsg('이 브라우저는 읽어 주기를 지원하지 않아요.'); return; }
+    speechSynthesis.cancel();
+    const r = S.lastReport;
+    const parts = [`${r.label}. 가릴 곳 ${S.findings.filter(f => f.selected).length}개를 찾았어요.`]
+      .concat(r.cards.filter(c => c.level >= 1).slice(0, 4).map(c => c.title.replace(/[^\p{L}\p{N}\s.,·%']/gu, ' ')));
+    const u = new SpeechSynthesisUtterance(parts.join(' '));
+    u.lang = 'ko-KR'; u.rate = 1;
+    speechSynthesis.speak(u);
+  }
+
+  // ---------- B. 어디에 올리는지 ----------
+  function setContext(ctx) {
+    S.context = ctx;
+    [...document.querySelectorAll('#ctx button')].forEach(b => b.classList.toggle('on', b.dataset.v === ctx));
+    if (S.findings.length && !S.busy) {
+      Detect.applyContext(S.findings, ctx);
+      renderAll();
+    }
+  }
+
+  // ---------- E. 장면 판단 AI 준비 ----------
+  let sceneReady = false;
+  function loadScene() {
+    if (!S.sceneOn || !window.Scene) return;
+    Scene.load(t => { $('#sceneStatus').textContent = t; }).then(() => {
+      sceneReady = true;
+      $('#sceneStatus').textContent = '✓ 장면 판단 AI 준비 완료';
+    }).catch(e => {
+      console.error(e);
+      $('#sceneStatus').textContent = '장면 판단 AI를 불러오지 못했어요 (글자·얼굴 찾기는 그대로 돼요)';
+      S.sceneOn = false; $('#sceneToggle').checked = false;
+    });
+  }
+
+  // ---------- D. 앱으로 설치 (PWA) ----------
+  let installEvt = null;
+  function setupPwa() {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+    }
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    if (standalone) { $('#installBox').classList.add('hidden'); return; }
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    if (ios) $('#installHint').textContent = '아이폰: Safari 아래 공유 버튼(□↑) → "홈 화면에 추가"를 누르면 앱처럼 쓸 수 있어요.';
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault(); installEvt = e;
+      $('#installBtn').classList.remove('hidden');
+    });
+    $('#installBtn').onclick = async () => {
+      if (!installEvt) return;
+      installEvt.prompt();
+      await installEvt.userChoice.catch(() => {});
+      installEvt = null; $('#installBtn').classList.add('hidden');
+    };
   }
 
   // ---------- 카메라 ----------
@@ -680,14 +804,30 @@
   $('#allOn').onclick = () => { S.findings.forEach(f => { f.selected = true; }); renderAll(); };
   $('#allOff').onclick = () => { S.findings.forEach(f => { f.selected = false; }); renderAll(); };
   $('#another').onclick = () => { $('#pick').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  $('#ctx').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setContext(b.dataset.v); });
+  $('#speakBtn').onclick = speak;
+  $('#bigBtn').onclick = () => {
+    const on = document.body.classList.toggle('big');
+    $('#bigBtn').setAttribute('aria-pressed', on);
+  };
+  $('#testToggle').onchange = e => { S.test.on = e.target.checked; renderTest(); };
+  $('#testCopy').onclick = async () => {
+    const t = testSummary();
+    const txt = `올리기 전에 시험 결과: 사진 ${t.n}장, AI가 찾은 곳 ${t.found}곳, 잘못 찾음 ${t.wrong}곳, 놓침 ${t.missed}곳, 맞게 찾은 비율 ${t.precision}, 놓치지 않은 비율 ${t.recall}`;
+    try { await navigator.clipboard.writeText(txt); $('#testCopy').textContent = '✓ 복사했어요'; } catch (e) { $('#testCopy').textContent = txt; }
+  };
+  $('#testReset').onclick = () => { S.test.photos = {}; renderTest(); };
+  $('#sceneToggle').onchange = e => { S.sceneOn = e.target.checked; if (S.sceneOn) loadScene(); else $('#sceneStatus').textContent = '장면 판단 AI 꺼 둠'; };
+  setupPwa();
   // 미리 모델을 받아 두면 첫 분석이 빨라진다
-  setModel('AI 모델 준비 중… (처음 한 번만, 약 15MB)');
+  setModel('AI 모델 준비 중… (처음 한 번만, 약 20MB)');
   setTimeout(() => {
     Promise.all([getOcrPool(), getFace()]).then(() => {
       // 준비가 끝난 순간부터 이 페이지가 바깥으로 보내는 요청을 센다
       readyAt = performance.now();
       setModel('✓ AI 준비 완료 · 이제 인터넷을 끊어도 분석돼요 (비행기 모드로 직접 확인해 보세요)', 'ok');
       renderNet();
+      loadScene(); // 글자·얼굴 AI가 준비된 뒤에 장면 AI를 이어서 받는다
     }).catch(e => {
       console.error(e);
       setModel('AI 모델을 받지 못했어요. 인터넷 연결을 확인하고 새로 고침해 주세요.', 'err');

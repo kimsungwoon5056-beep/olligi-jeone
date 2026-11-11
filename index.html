@@ -54,18 +54,41 @@
   .linkbtn[aria-pressed="true"] { background: var(--tape); text-decoration: none; padding: 6px 8px; }
 
   /* ---------- 첫 화면: 테이프가 붙는 한 장면 ---------- */
-  .hero { padding: 56px 0 40px; max-width: 860px; }
-  .hero h1 { font: clamp(40px, 7vw, 76px)/1.05 var(--display); margin: 0 0 28px; letter-spacing: -1px; }
-  .story { font-size: clamp(19px, 2.4vw, 24px); line-height: 1.7; margin: 0 0 18px; max-width: 34em; }
-  .pii { position: relative; white-space: nowrap; }
-  .pii::after {
-    content: ''; position: absolute; left: -0.18em; right: -0.18em; top: 0.12em; bottom: 0.02em;
-    background: var(--tape); transform-origin: left center; transform: scaleX(0) rotate(-1.2deg);
-    clip-path: polygon(0 10%, 3% 0, 97% 0, 100% 12%, 98% 50%, 100% 88%, 97% 100%, 3% 100%, 0 90%, 2% 50%);
-    animation: tape .42s cubic-bezier(.2, .7, .2, 1) forwards; animation-delay: var(--d, .6s);
+  .hero { padding: 48px 0 40px; }
+  .hero h1 { font: clamp(38px, 6vw, 68px)/1.05 var(--display); margin: 0 0 30px; letter-spacing: -1px; }
+  .demo { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 36px; align-items: start; margin: 0 0 26px; }
+  .hphoto { position: relative; margin: 0; border-radius: 10px; overflow: hidden; background: var(--sheet); }
+  .hphoto img { display: block; width: 100%; aspect-ratio: 4 / 3; }
+  .hbox { position: absolute; border: 2.5px solid var(--risk); }
+  .hbox[data-no]::before { content: attr(data-no); position: absolute; left: -11px; top: -11px; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); color: #fff; font: 600 11px/20px var(--body); text-align: center; z-index: 2; }
+  .hphoto[data-hot] .hbox { opacity: .35; }
+  .hphoto[data-hot="0"] .hbox[data-row="0"], .hphoto[data-hot="1"] .hbox[data-row="1"], .hphoto[data-hot="2"] .hbox[data-row="2"], .hphoto[data-hot="3"] .hbox[data-row="3"] { opacity: 1; border-width: 4px; }
+  .hbox::after {
+    content: ''; position: absolute; inset: -5px -7px; background: var(--tape);
+    background-image: repeating-linear-gradient(-55deg, rgba(160,120,0,.16) 0 2px, transparent 2px 9px);
+    clip-path: polygon(0 0, 100% 0, 97% 20%, 100% 40%, 97% 60%, 100% 80%, 97% 100%, 0 100%, 3% 80%, 0 60%, 3% 40%, 0 20%);
+    transform: scaleX(0); transform-origin: left center; transition: transform .36s cubic-bezier(.2, .7, .2, 1);
   }
-  @keyframes tape { to { transform: scaleX(1) rotate(-1.2deg); } }
-  @media (prefers-reduced-motion: reduce) { .pii::after { animation: none; transform: rotate(-1.2deg); } }
+  .hbox.taped { border-color: transparent; }
+  .hbox.taped::after { transform: scaleX(1) rotate(-1deg); }
+  .hbox.taped[data-no]::before { opacity: 0; }
+  .hchip { position: absolute; right: 10px; bottom: 10px; background: var(--ink); color: var(--paper); font-size: 13px; padding: 6px 10px; border-radius: 4px; transition: opacity .3s; }
+  .hchip.gone { opacity: 0; }
+  .facts h2 { font: 22px/1.3 var(--display); margin: 0 0 12px; letter-spacing: -0.3px; }
+  .facts ol { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); }
+  .facts li { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 16px; }
+  .facts .k { font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .facts .k[data-no]:not([data-no=""])::before { content: attr(data-no); display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 11px; }
+  .facts .v { position: relative; }
+  .facts .now { display: none; color: var(--safe); font-weight: 600; }
+  .facts li.gone .was { display: none; }
+  .facts li.gone .now { display: inline; }
+  .facts li.gone .k { color: var(--mute); }
+  .hsum { min-height: 1.6em; margin: 12px 0 0; color: var(--safe); font-weight: 600; }
+  .hact { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 14px; }
+  .btn.tapebtn { background: var(--tape); color: var(--tape-ink); border-color: var(--tape); }
+  .btn.tapebtn:hover { border-color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { .hbox::after { transition: none; } }
   .lede { font-size: 17px; color: var(--mute); max-width: 40em; margin: 0; }
   .status { margin: 22px 0 0; font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
   .model::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--rule); margin-right: 8px; vertical-align: 1px; }
@@ -196,7 +219,11 @@
     .samples { grid-template-columns: repeat(2, 1fr); }
     .finds { columns: 1; }
     .more { grid-template-columns: 1fr; }
-    .hero { padding: 36px 0 28px; }
+    .hero { padding: 32px 0 28px; }
+    .demo { grid-template-columns: 1fr; gap: 18px; }
+    .facts li { grid-template-columns: 96px 1fr; font-size: 15px; }
+    .facts .k { white-space: nowrap; }
+    .facts h2 { font-size: 19px; }
     .step > h2, .block > h2 { font-size: 25px; }
     .proof .num { font-size: 48px; }
   }
@@ -212,12 +239,22 @@
 <main class="wrap">
   <section class="hero">
     <h1>올리기 전에,<br>먼저 가려요.</h1>
-    <p class="story">팔려고 찍은 택배 상자 사진에
-      <span class="pii" style="--d:.7s">김하늘</span>,
-      <span class="pii" style="--d:1.05s">010-2847-1936</span>,
-      <span class="pii" style="--d:1.4s">전주시 덕진구 가상로 123</span>이
-      그대로 찍혀 있었어요.</p>
-    <p class="lede">사진 속 송장·번호판·아이 이름표·카드번호·얼굴, 눈에 안 보이는 촬영 위치까지 AI가 찾아요. 왜 위험한지 알려 주고, 확인 한 번이면 가려요. 사진은 이 기기 밖으로 나가지 않아요.</p>
+    <div class="demo">
+      <figure class="hphoto" id="heroPhoto">
+        <img alt="택배 송장이 붙은 상자 사진 (예시, 모든 정보는 가짜)">
+        <span class="hchip" id="heroChip">사진 파일 속에 찍은 곳·때 정보가 숨어 있어요</span>
+      </figure>
+      <div class="facts">
+        <h2>이 사진 한 장으로 낯선 사람이 알 수 있는 것</h2>
+        <ol id="heroFacts" aria-live="polite"></ol>
+        <p class="hsum" id="heroSummary" aria-live="polite"></p>
+        <div class="hact">
+          <button class="btn tapebtn" id="heroGo" type="button">올리기 전에 가리기</button>
+          <button class="linkbtn hidden" id="heroAgain" type="button">처음부터 다시 보기</button>
+        </div>
+      </div>
+    </div>
+    <p class="lede">AI가 사진 속 글자·얼굴·QR·바코드와 사진 파일에 숨은 정보를 이 기기 안에서 찾아요. 남이 무엇을 알 수 있는지 알려 주고, 확인 한 번이면 가려요. 사진은 이 기기 밖으로 나가지 않아요.</p>
     <div class="status">
       <span class="model" id="modelStatus" role="status"></span>
       <span class="mute" id="sceneStatus">장면 AI 준비 대기</span>
@@ -378,5 +415,6 @@
 <script src="scene.js"></script>
 <script src="detect.js"></script>
 <script src="app.js"></script>
+<script src="hero.js"></script>
 </body>
 </html>

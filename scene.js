@@ -25,18 +25,24 @@
   }
 
   async function fetchWithProgress(url, onProgress) {
+    // 서버가 압축해서 보내면 content-length(압축 크기)와 실제로 받는 크기가 다르다.
+    // 그래서 조각을 모아 두었다가 마지막에 합치고, 진행률은 대략만 보여 준다.
+    const EXPECT = 22876479; // 모델 파일의 실제 크기
     const res = await fetch(url);
-    const total = +res.headers.get('content-length') || 0;
-    if (!res.body || !total) return new Uint8Array(await res.arrayBuffer());
+    if (!res.ok) throw new Error('장면 AI 파일을 받지 못했어요 (' + res.status + ')');
+    if (!res.body) return new Uint8Array(await res.arrayBuffer());
     const reader = res.body.getReader();
-    const out = new Uint8Array(total);
+    const parts = [];
     let got = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      out.set(value, got); got += value.length;
-      onProgress && onProgress(`장면 AI 받는 중 ${Math.round(got / total * 100)}%`);
+      parts.push(value); got += value.length;
+      onProgress && onProgress(`장면 AI 받는 중 ${Math.min(99, Math.round(got / EXPECT * 100))}%`);
     }
+    const out = new Uint8Array(got);
+    let off = 0;
+    for (const p of parts) { out.set(p, off); off += p.length; }
     return out;
   }
 

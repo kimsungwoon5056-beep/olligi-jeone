@@ -317,7 +317,10 @@
         const xs = [L.topLeftCorner.x, L.topRightCorner.x, L.bottomLeftCorner.x, L.bottomRightCorner.x];
         const ys = [L.topLeftCorner.y, L.topRightCorner.y, L.bottomLeftCorner.y, L.bottomRightCorner.y];
         S.qrFound = Detect.scanPlainText(qr.data);
-        found.push({ type: 'qr', text: S.qrFound.length ? `안에 ${S.qrFound.join('·')}` : '내용 읽음',
+        // QR 안에서 개인정보를 찾았을 때만 '위험 중간', 아니면 '낮음'. 링크라면 사이트 주소(도메인)만 보여 준다.
+        let qrNote = '내용 읽음';
+        try { const u = new URL(qr.data); if (/^https?:$/.test(u.protocol)) qrNote = `링크: ${u.hostname}`; } catch (e) { /* 링크 아님 */ }
+        found.push({ type: S.qrFound.length ? 'qr' : 'qrplain', text: S.qrFound.length ? `안에 ${S.qrFound.join('·')}` : qrNote,
           box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) } });
       }
       bars.forEach(b => found.push({ type: 'barcode', text: '', box: b }));

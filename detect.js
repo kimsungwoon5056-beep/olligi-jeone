@@ -22,6 +22,7 @@
     school:   { label: '학교 이름', level: 2, why: '아이가 다니는 학교를 알 수 있어요.' },
     face:     { label: '얼굴', level: 2, why: '다른 사람 얼굴은 허락 없이 올리면 초상권 문제가 생길 수 있어요.' },
     qr:       { label: 'QR 코드', level: 2, why: 'QR 안에 주문 정보나 주소가 들어 있을 수 있어요.' },
+    qrplain:  { label: 'QR 코드', level: 1, why: 'QR 안에서 개인정보는 찾지 못했어요. 내 계정이나 결제 링크일 수 있으니 필요 없으면 가리세요.' },
     barcode:  { label: '바코드', level: 2, why: '송장 바코드에는 운송장 번호가 들어 있어요. 찍어서 조회할 수 있어요.' },
     name:     { label: '이름', level: 1, why: '다른 정보와 합쳐지면 누구인지 알 수 있어요.' },
     email:    { label: '이메일', level: 1, why: '스팸이나 피싱 메일을 받을 수 있어요.' },
@@ -37,7 +38,7 @@
       note: '누구나 보고 저장할 수 있는 곳이라 찾은 것을 모두 가렸어요.' },
     group: { label: '지인 단체방', icon: '👥', keep: ['name', 'face'],
       note: '아는 사람끼리라 이름·얼굴은 그대로 두었어요. 단체방 캡처는 밖으로 퍼지기 쉬워서 번호·주소는 가렸어요.' },
-    family: { label: '가족방', icon: '🏠', keep: ['name', 'face', 'child', 'school', 'phone', 'apt', 'address', 'plate', 'tracking', 'qr', 'barcode'],
+    family: { label: '가족방', icon: '🏠', keep: ['name', 'face', 'child', 'school', 'phone', 'apt', 'address', 'plate', 'tracking', 'qr', 'qrplain', 'barcode'],
       note: '가족끼리라 이름·주소·전화번호는 그대로 두었어요. 그래도 주민번호·카드·계좌·비밀번호는 가렸어요. 캡처가 밖으로 나갈 수 있으니까요.' },
   };
   function applyContext(findings, ctx) {
@@ -227,6 +228,9 @@
     }
     if (has('account')) {
       cards.push({ level: 2, title: '계좌번호가 보여요', body: '계좌번호와 예금주 이름으로 지인인 척 돈을 보내 달라는 사기를 칠 수 있어요.' });
+    }
+    if (has('qrplain') && !has('tracking') && !has('barcode') && !has('qr')) {
+      cards.push({ level: 1, title: 'QR 코드가 보여요', body: 'QR 안에서 개인정보는 찾지 못했어요. 다만 내 프로필·결제 링크라면 낯선 사람이 찍어서 열어 볼 수 있어요.' });
     }
     if (has('tracking') || has('qr') || has('barcode')) {
       const inQr = (extra.qrFound || []).length ? ` QR을 읽어 보니 ${extra.qrFound.join('·')}까지 들어 있어요.` : '';

@@ -20,6 +20,7 @@
         scale = lab.scale || 100;
         return ort.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
       })();
+      ready.catch(() => { ready = null; });
     }
     return ready;
   }
@@ -80,5 +81,8 @@
     return Object.values(agg).sort((a, b) => b.p - a.p);
   }
 
-  window.Scene = { load, classify };
+  // 불러오기에 실패했을 때 처음부터 다시 받을 수 있게 한다
+  function reset() { ready = null; }
+
+  window.Scene = { load, classify, reset };
 })();

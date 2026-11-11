@@ -143,7 +143,7 @@
     ['qr', 'QR·바코드 찾기'],
     ['agent', '개인정보 판단·위험 설명'],
   ];
-  let times = {};
+  let times = {}, stepNote = {}, sceneErr = '';
   // 전체 진행 막대: 단계마다 걸리는 시간 비율로 나눈다 (글자 읽기가 대부분)
   const WEIGHT = { meta: 0.03, ocr: 0.72, face: 0.08, scene: 0.10, qr: 0.04, agent: 0.03 };
   let prog = {};
@@ -154,7 +154,7 @@
     $('#bar').setAttribute('aria-valuenow', Math.round(p * 100));
   }
   function resetSteps() {
-    times = {}; prog = {};
+    times = {}; prog = {}; stepNote = {};
     $('#steps').innerHTML = STEPS.map(([id, name]) => `<li id="st-${id}"><span>${name}</span><span class="st">기다리는 중</span></li>`).join('');
     $('#bar').classList.remove('hidden');
     setBar('meta', 0);
@@ -178,6 +178,7 @@
       return r;
     } catch (e) {
       console.error(id, e);
+      stepNote[id] = '오류';
       times[id] = null;
       setStep(id, '건너뜀 (오류)');
       return null;
@@ -185,7 +186,7 @@
   }
   function fmtMs(ms) { return ms >= 1000 ? (ms / 1000).toFixed(1) + '초' : Math.round(ms) + 'ms'; }
   function renderPerf() {
-    const rows = STEPS.map(([id, name]) => `<tr><td>${name}</td><td>${times[id] == null ? '-' : fmtMs(times[id])}</td></tr>`);
+    const rows = STEPS.map(([id, name]) => `<tr><td>${name}</td><td>${times[id] == null ? (stepNote[id] || '-') : fmtMs(times[id])}</td></tr>`);
     const total = Object.values(times).filter(v => v != null).reduce((a, b) => a + b, 0);
     rows.push(`<tr><th>합계</th><th>${fmtMs(total)}</th></tr>`);
     $('#perf').innerHTML = '<tr><th>단계</th><th>시간</th></tr>' + rows.join('');
@@ -264,6 +265,7 @@
       });
     } else {
       setStep('scene', '꺼 둠', true);
+      stepNote.scene = sceneErr ? '불러오지 못함' : '꺼 둠';
     }
     let bars = [];
     const qr = await timed('qr', async () => {
@@ -747,7 +749,13 @@
       $('#sceneStatus').textContent = '장면 판단 AI도 준비됐어요';
     }).catch(e => {
       console.error(e);
-      $('#sceneStatus').textContent = '장면 판단 AI를 불러오지 못했어요 (글자·얼굴 찾기는 그대로 돼요)';
+      sceneErr = (e && (e.message || String(e)) || '알 수 없는 오류').slice(0, 120);
+      $('#sceneStatus').innerHTML = '';
+      $('#sceneStatus').append(`장면 판단 AI를 불러오지 못했어요 (${sceneErr}). 글자·얼굴 찾기는 그대로 돼요. `);
+      const again = document.createElement('button');
+      again.type = 'button'; again.className = 'linkbtn'; again.textContent = '다시 불러오기';
+      again.onclick = () => { Scene.reset(); S.sceneOn = true; $('#sceneToggle').checked = true; sceneErr = ''; loadScene(); };
+      $('#sceneStatus').append(again);
       S.sceneOn = false; $('#sceneToggle').checked = false;
     });
   }

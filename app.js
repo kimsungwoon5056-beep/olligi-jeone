@@ -53,16 +53,28 @@
     const pool = await getOcrPool();
     const out = new Array(jobs.length);
     let next = 0, done = 0;
+    let failed = 0;
     await Promise.all(pool.map(async w => {
       while (next < jobs.length) {
         const i = next++;
-        await w.setParameters({ tessedit_pageseg_mode: jobs[i].psm });
-        const { data } = await w.recognize(jobs[i].canvas);
-        if (jobs[i].back) mapLines(data, jobs[i].back);
-        out[i] = data;
+        try {
+          await w.setParameters({ tessedit_pageseg_mode: jobs[i].psm });
+          const { data } = await w.recognize(jobs[i].canvas);
+          if (jobs[i].back) mapLines(data, jobs[i].back);
+          out[i] = data;
+        } catch (e) {
+          console.error('글자 읽기 실패', e);
+          failed++; out[i] = { lines: [], text: '' };
+        }
         onDone(++done, jobs.length);
       }
     }));
+    if (failed) {
+      // 일꾼이 멈췄을 수 있으니 버리고, 다음 사진에서 새로 띄운다
+      pool.forEach(w => { try { w.terminate(); } catch (e) { /* 이미 멈춤 */ } });
+      ocrP = null;
+      if (failed === jobs.length) throw new Error('글자 읽기를 하지 못했어요');
+    }
     return out;
   }
   function getFace() {
@@ -207,7 +219,7 @@
     // 분석용 크기: 긴 변이 아니라 전체 화소 수로 줄인다. 세로로 긴 화면 캡처의 작은 글씨가 뭉개지지 않게.
     S.k = Math.min(1, Math.sqrt(WORK_AREA / (S.W * S.H)), WORK_SIDE / Math.max(S.W, S.H));
     S.work.width = Math.round(S.W * S.k); S.work.height = Math.round(S.H * S.k);
-    S.work.getContext('2d').drawImage(img, 0, 0, S.work.width, S.work.height);
+    { const wg = S.work.getContext('2d'); wg.fillStyle = '#fff'; wg.fillRect(0, 0, S.work.width, S.work.height); wg.drawImage(img, 0, 0, S.work.width, S.work.height); }
     S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = ''; S.hover = null; S.preview = false; S.skewDeg = 0; S.scene = null;
     $('#previewToggle').checked = false;
     $('#workCard').classList.remove('hidden');
@@ -581,7 +593,7 @@
         <i class="no" style="background:${col}">${i + 1}</i>
         <div><span class="kind">${t.label}</span><span class="pill l${t.level}">${['', '낮음', '중간', '높음'][t.level]}</span>
         ${f.text ? ` <span class="val">${esc(f.text)}</span>` : ''}
-        <span class="why">${esc(f.note ? f.note + '. ' + t.why : t.why)}</span></div></label>`;
+        <span class="why">${esc(f.note ? f.note + '. ' + t.why : t.why)}</span>${t.rule ? `<span class="rule">판단 근거: ${esc(t.rule)}</span>` : ''}</div></label>`;
       li.querySelector('input').onchange = e => { f.selected = e.target.checked; f.touched = true; renderAll(); };
       const on = () => { S.hover = i; draw(); }, off = () => { S.hover = null; draw(); };
       li.addEventListener('mouseenter', on); li.addEventListener('mouseleave', off);
@@ -695,6 +707,7 @@
     const out = document.createElement('canvas');
     out.width = Math.round(r.W * so); out.height = Math.round(r.H * so);
     const g = out.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height); // 투명한 PNG가 검게 저장되지 않게
     g.drawImage(r.img, 0, 0, out.width, out.height);
     applyMasks(g, so / r.k, r.findings);
     return new Promise(res => out.toBlob(res, 'image/jpeg', 0.92));
@@ -730,7 +743,12 @@
   function snapshot(name) {
     const r = { name };
     KEEP.forEach(k => { r[k] = S[k]; });
+    r.buffer = null; S.buffer = null; // 숨은 정보는 이미 읽었으니 원본 파일 바이트는 들고 있지 않는다
     r.times = { ...times }; r.stepNote = { ...stepNote };
+    const t = document.createElement('canvas'), sc = 224 / Math.max(r.work.width, r.work.height);
+    t.width = Math.round(r.work.width * sc); t.height = Math.round(r.work.height * sc);
+    t.getContext('2d').drawImage(r.work, 0, 0, t.width, t.height);
+    r.thumb = t.toDataURL('image/jpeg', 0.7);
     return r;
   }
   function restore(r) {
@@ -761,7 +779,7 @@
       b.type = 'button'; b.className = 'bitem l' + rep.level + (i === S.cur ? ' on' : '');
       b.setAttribute('aria-pressed', i === S.cur);
       b.setAttribute('aria-label', `${i + 1}번째 사진, ${rep.label}, 가릴 곳 ${n}개`);
-      b.innerHTML = `<img alt="" src="${r.img.src}"><span class="bl">${rep.label.replace('위험 ', '')}</span><span class="bn">가릴 곳 ${n}</span>`;
+      b.innerHTML = `<img alt="" src="${r.thumb}"><span class="bl">${rep.label.replace('위험 ', '')}</span><span class="bn">가릴 곳 ${n}</span>`;
       b.onclick = () => { if (S.busy || i === S.cur) return; S.cur = i; restore(r); };
       box.appendChild(b);
     });
@@ -989,6 +1007,38 @@
   $('label[for="file"]').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
   $('#file').onchange = e => { const fs = e.target.files; if (fs && fs.length) loadFiles(fs); e.target.value = ''; };
   $('#saveAllBtn').onclick = saveAll;
+  $('#ruleToggle').onchange = e => $('#finds').classList.toggle('rules', e.target.checked);
+  // 캡처한 뒤 Ctrl+V로 붙여 넣거나, 사진 파일을 페이지에 끌어다 놓으면 바로 분석한다
+  document.addEventListener('paste', e => {
+    const fs = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+    if (fs.length) { e.preventDefault(); loadFiles(fs); }
+  });
+  let dragDepth = 0;
+  document.addEventListener('dragenter', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; document.body.classList.add('dropping'); } });
+  document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dropping'); } });
+  document.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
+  document.addEventListener('drop', e => {
+    dragDepth = 0; document.body.classList.remove('dropping');
+    const fs = e.dataTransfer?.files;
+    if (fs && fs.length) { e.preventDefault(); loadFiles(fs); }
+  });
+  // 안드로이드 '공유'로 받은 사진: 서비스 워커가 잠깐 보관해 둔 것을 꺼내 분석하고 바로 지운다
+  (async () => {
+    if (!/[?&]shared=/.test(location.search) || !('caches' in window)) return;
+    history.replaceState(null, '', location.pathname);
+    try {
+      const c = await caches.open('olligi-share');
+      const keys = await c.keys();
+      const files = [];
+      for (const k of keys) {
+        const res = await c.match(k);
+        const blob = await res.blob();
+        files.push(new File([blob], decodeURIComponent(res.headers.get('x-name') || 'shared.jpg'), { type: blob.type || 'image/jpeg' }));
+      }
+      await caches.delete('olligi-share');
+      if (files.length) { showMsg(`공유로 받은 사진 ${files.length}장을 분석할게요.`); loadFiles(files); }
+    } catch (e) { console.error(e); }
+  })();
   $('#camBtn').onclick = openCam;
   $('#camClose').onclick = closeCam;
   $('#snap').onclick = snap;
@@ -1048,5 +1098,5 @@
   setInterval(renderNet, 2000);
   // 개발 확인용
   window.__olligi = S;
-  window.__olligiDebug = { findBarcodes, adaptive, makeZip, crc32 };
+  window.__olligiDebug = { findBarcodes, adaptive, makeZip, crc32, maskedBlob };
 })();

@@ -1,7 +1,7 @@
 // 올리기 전에 - 오프라인용 서비스 워커
 // 앱과 AI 모델 파일을 이 기기에 보관해서, 한 번 연 뒤에는 인터넷 없이도 돌게 한다.
 // 이 서비스 워커는 같은 사이트의 파일을 '받아 두기'만 하고, 어디로도 보내지 않는다.
-const VER = 'olligi-v16';
+const VER = 'olligi-v17';
 const SHELL = ['./', 'index.html', 'app.js', 'detect.js', 'scene.js', 'hero.js', 'samples.js', 'manifest.webmanifest'];
 const CORE = [
   'icons/icon-192.png', 'icons/icon-512.png',
@@ -20,12 +20,29 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== VER).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k !== VER && k !== 'olligi-share').map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
+// 안드로이드 갤러리의 '공유' → '올리기 전에'로 보낸 사진을 받는다.
+// 사진은 이 기기 안의 보관함에 잠깐 넣었다가, 앱 화면이 꺼내 분석한 뒤 바로 지운다. 서버로는 가지 않는다.
+async function receiveShare(req) {
+  try {
+    const form = await req.formData();
+    const files = form.getAll('photos').filter(f => f && f.size).slice(0, 10);
+    await caches.delete('olligi-share');
+    const c = await caches.open('olligi-share');
+    await Promise.all(files.map((f, i) => c.put(`./__shared/${i}`, new Response(f, { headers: { 'content-type': f.type || 'image/jpeg', 'x-name': encodeURIComponent(f.name || `shared${i}.jpg`) } }))));
+  } catch (err) { /* 받지 못하면 그냥 앱만 연다 */ }
+  return Response.redirect('./?shared=1', 303);
+}
+
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+  if (e.request.method === 'POST' && url.origin === location.origin && url.pathname.endsWith('/share')) {
+    e.respondWith(receiveShare(e.request));
+    return;
+  }
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   const isVendor = url.pathname.includes('/vendor/') || url.pathname.includes('/icons/');
   if (isVendor) {

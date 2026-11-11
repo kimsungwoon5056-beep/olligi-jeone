@@ -316,19 +316,26 @@
           const w = b.x1 - b.x0, h = b.y1 - b.y0;
           return h <= medH * 3 && w >= h * 0.9 && w <= S.work.width * 0.95;
         };
+        const put = f => {
+          if (!saneTextBox(f.box)) { console.info('상자 모양이 글자 같지 않아 뺐어요', f.type, f.text); return; }
+          // 같은 자리에서 여러 판이 찾은 것은 하나만 남긴다. 겹치면 더 위험한 종류(높은 단계)를 남긴다.
+          const lv = t => Detect.TYPES[t].level;
+          const j = found.findIndex(g => overlap(g.box, f.box) > 0.5 && (g.type === f.type || g.text === f.text || g.type === 'number' || f.type === 'number'));
+          if (j < 0) found.push(f);
+          else if (lv(f.type) > lv(found[j].type)) found[j] = f;
+        };
         ocr.forEach(data => {
           (data.text || '').split('\n').map(s => s.trim()).filter(s => s.length > 1).forEach(s => {
             if (!seenLines.has(s)) { seenLines.add(s); textLines.push(s); }
           });
-          Detect.analyzeLines(data.lines || []).forEach(f => {
-            if (!saneTextBox(f.box)) { console.info('상자 모양이 글자 같지 않아 뺐어요', f.type, f.text); return; }
-            // 같은 자리에서 여러 판이 찾은 것은 하나만 남긴다. 겹치면 더 위험한 종류(높은 단계)를 남긴다.
-            const lv = t => Detect.TYPES[t].level;
-            const j = found.findIndex(g => overlap(g.box, f.box) > 0.5 && (g.type === f.type || g.text === f.text || g.type === 'number' || f.type === 'number'));
-            if (j < 0) found.push(f);
-            else if (lv(f.type) > lv(found[j].type)) found[j] = f;
-          });
+          Detect.analyzeLines(data.lines || []).forEach(put);
         });
+        // 한 번 찾은 이름은 사진의 다른 곳에서도 찾는다 (같은 사람 이름이 두 번 나오는 송금 화면 등)
+        const names = found.filter(f => f.type === 'name').map(f => f.text)
+          .concat(found.filter(f => f.type === 'child').map(f => (f.text.match(/반([가-힣]{2,4})$/) || ['', ''])[1]));
+        ocr.forEach(data => Detect.findNames(data.lines || [], names).forEach(f => {
+          if (!found.some(g => overlap(g.box, f.box) > 0.3)) put({ ...f, note: '위에서 찾은 이름과 같아요' });
+        }));
         S.ocrText = textLines.join('\n');
       }
       (faces || []).forEach(f => {
@@ -463,7 +470,9 @@
         const x0 = Math.max(0, x - r), x1 = Math.min(W, x + r + 1);
         const m = (I[y1 * (W + 1) + x1] - I[y0 * (W + 1) + x1] - I[y1 * (W + 1) + x0] + I[y0 * (W + 1) + x0]) / ((x1 - x0) * (y1 - y0));
         const p = gray[y * W + x];
-        const v = (invert ? p > m + C : p < m - C) ? 0 : 255;
+        // 주변 평균보다 '조금' 어두운 것이 아니라 '확실히' 어두운 것만 글자로 본다.
+        // (흰 말풍선 바로 옆의 회색 바탕이 검게 잡혀 말풍선 테두리가 글자처럼 보이는 것을 막는다)
+        const v = (invert ? p > m + C && 255 - p < (255 - m) * 0.78 : p < m - C && p < m * 0.78) ? 0 : 255;
         const k = (y * W + x) * 4;
         od.data[k] = od.data[k + 1] = od.data[k + 2] = v; od.data[k + 3] = 255;
       }

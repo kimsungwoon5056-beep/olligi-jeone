@@ -58,16 +58,16 @@
     passport: /[MSRODG]\d{8}|[MSRODG]\d{3}[A-Z]\d{4}/g,
     password: /(비밀번호|비번|패스워드|암호|PW|pw|Pw|password|PASSWORD)[:：=]?([^\s가-힣]{4,}|\d{4,})/g,
     phone: /(?<!\d)((01[016789]-?\d{3,4}-?\d{4})|(0(2|[3-6][1-5])-\d{3,4}-\d{4}))(?!\d)/g,
-    digits3: /\d{2,6}-\d{2,6}-\d{2,7}/g,
-    plate: new RegExp('\\d{2,3}[' + PLATE_CH + ']\\d{4}', 'g'),
+    digits3: /\d{2,6}-\d{2,6}-\d{2,7}(-\d{1,6})?/g,
+    plate: new RegExp('(?<!\\d)\\d{2,3}[' + PLATE_CH + ']\\d{4}(?!\\d)', 'g'),
     apt: /\d{1,4}동(\d{1,4}호)?|\d{3,4}호/g,
     // 도로명 + 건물번호. 뒤에 '만원·개·시' 같은 단위가 붙으면 주소가 아니다 (예: '여기로 3만원')
     roadAddr: /(?<=[가-힣0-9])(로|길)\d{1,5}(-\d{1,4})?(?!\d)(?!(만|천|원|개|명|시|분|초|일|월|년|번째|위|등|층|kg|km|cm|%))/,
     region: /(특별시|광역시|특별자치|[가-힣]+(시|군|구|읍|면)|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)/,
     school: /[가-힣]{1,12}(초등학교|중학교|고등학교|유치원|어린이집|대학교)/g,
     child: /\d학년\d{1,2}반([가-힣]{2,4})?/g,
-    nameLabel: /^(받는분|받는사람|받는이|수령인|수취인|성명|이름|예금주|보내는분|보내는사람|고객명)[:：]?$/,
-    nameLabelGlued: /^(받는분|받는사람|받는이|수령인|수취인|성명|이름|예금주|보내는분|보내는사람|고객명)[:：]?([가-힣]{2,5})$/,
+    nameLabel: /^(받는분|받는사람|받는이|수령인|수취인|성명|성함|이름|예금주|보내는분|보내는사람|보내는이|고객명|담임|담당자|예약자|주문자|신청자|보호자|입금자|송금인|구매자|판매자|대표자|작성자)[:：]?$/,
+    nameLabelGlued: /^(받는분|받는사람|받는이|수령인|수취인|성명|성함|이름|예금주|보내는분|보내는사람|보내는이|고객명|담임|담당자|예약자|주문자|신청자|보호자|입금자|송금인|구매자|판매자|대표자|작성자)[:：]?([가-힣]{2,5})(?=[\d(-]|$)/,
     email: /[\w.+-]+@[\w-]+\.[\w.]+/g,
   };
 
@@ -85,8 +85,11 @@
   }
 
   // 이름이 아닌 흔한 말 (조사·어미·동사)
-  const NOT_NAME = /^(입니다|이에요|예요|이고|이며|이요|으로|에게|에서|까지|부터|님께|입금|계좌|은행|보내|드려|주세|해주|합니다|있어|없어|이다|이랑|하고|씨에게|번호|확인|입력|선택|변경|없음|전용|표|택배)/;
-  const NAME_HEAD_BAD = /^[을를은는에의도와과만으로표]/;
+  const NOT_NAME = /^(선생|부서|업무|교사|직원|관리|센터|고객|회원|입니다|이에요|예요|이고|이며|이요|으로|에게|에서|까지|부터|님께|입금|계좌|은행|보내|드려|주세|해주|합니다|있어|없어|이다|이랑|하고|씨에게|번호|확인|입력|선택|변경|없음|전용|표|택배)/;
+  const SURNAME = /^[김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경사부가복태목형피두감음빈동온호범좌팽승간상갈시견당화창]/;
+  // '○○님에게'에서 사람 이름이 아닌 말 (고객님, 기사님 같은 호칭)
+  const NOT_NAME_SIR = /^(고객|회원|기사|선생|사장|대표|부장|과장|차장|팀장|원장|교수|작가|주인|형|누|언니|오빠|구매자|판매자|관리자|담당자|운영자|사용자|이용자|보호자|신청자|주문자|예약자|배송기사|택배기사|집주인|사모|아드|따|손)$/;
+  const NAME_HEAD_BAD = /^[을를은는에의도와과만으로표님께]/;
   const okName = t => /^[가-힣]{2,5}$/.test(t) && !NOT_NAME.test(t) && !NAME_HEAD_BAD.test(t);
   // 날짜(2026-11-12)·짧은 숫자는 계좌가 아니다
   const isDate = t => /^(19|20)\d{2}-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])$/.test(t) || /^\d{2}-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])$/.test(t);
@@ -177,6 +180,7 @@
         const s = m.index, e = s + m[0].length;
         const t = m[0];
         if (isDate(t) || digitCount(t) < 9) continue; // 날짜·짧은 번호는 건너뛴다
+        if (/^(19|20)\d{2}-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])/.test(t)) continue; // '2026-11-11 13:42'가 붙어 읽힌 것
         if (isTracking) add('tracking', s, e);
         else if (isBank) {
           if (add('account', s, e)) {
@@ -188,6 +192,8 @@
           }
         } else add('number', s, e);
       }
+      // 운송장 번호는 하이픈 없이 12자리로 쓰는 일이 많다 (같은 줄에 운송장·송장·택배라는 말이 있을 때만)
+      if (isTracking) run('tracking', /(?<![\d-])\d{10,14}(?![\d-])/g);
       // 3) 차 번호판
       run('plate', RE.plate);
       // 4) 주소 (도로명 + 지역 이름이 같이 있으면 줄 전체를 주소로)
@@ -210,6 +216,10 @@
           }
         }
         if (regionOk) add('address', 0, compact.length, { overlap: true });
+      } else if (REGION_NAME.test(compact) && /[가-힣]{1,6}(시|군|구)/.test(compact.replace(REGION_NAME, ''))
+        && /[가-힣A-Za-z]\d{1,3}(-\d{1,4})?$/.test(compact) && !/(청|역|점|센터|병원|학교)\d/.test(compact)) {
+        // 도로명이 흐려서 못 읽었어도 '전북 전주시 덕진구 ○○ 249'처럼 시·도와 시·군·구 뒤 끝에 건물 번호가 오면 주소로 본다
+        add('address', 0, compact.length, { overlap: true });
       }
       // 5) 동·호수
       run('apt', RE.apt, mm => {
@@ -232,14 +242,45 @@
         }
         const w2 = compact.slice(a, b + 1);
         const glued = w2.match(RE.nameLabelGlued);
-        if (glued && okName(glued[2])) { add('name', b + 1 - glued[2].length, b + 1); continue; }
+        if (glued && okName(glued[2])) { add('name', a + glued[0].length - glued[2].length, a + glued[0].length); continue; }
         if (RE.nameLabel.test(w2) && b + 1 < compact.length) {
           let c = b + 1; while (c + 1 < compact.length && !wordStart(c + 1)) c++;
           const next = compact.slice(b + 1, c + 1);
           if (okName(next)) add('name', b + 1, c + 1);
+          else {
+            const lead = next.match(/^([가-힣]{2,4})(?=[\d(（-])/); // 이름 바로 뒤에 전화번호가 붙어 읽힌 경우
+            if (lead && okName(lead[1])) add('name', b + 1, b + 1 + lead[1].length);
+          }
         }
       }
+      // '김하늘님에게 보냈어요'처럼 성씨로 시작하는 3글자 + '님' (고객님·기사님 같은 호칭은 빼고)
+      for (let a = 0; a < compact.length; a++) {
+        if (!wordStart(a)) continue;
+        const mm = compact.slice(a).match(/^([가-힣]{3})님(에게|께|이|의|한테|으로|과|와|을|은|,|$)/);
+        if (mm && SURNAME.test(mm[1]) && !NOT_NAME_SIR.test(mm[1]) && okName(mm[1])) add('name', a, a + 3);
+      }
       run('email', RE.email);
+    }
+    return out;
+  }
+
+  // 한 번 찾은 이름이 사진의 다른 곳에도 나오면 거기도 찾는다 ('받는 분 김하늘'을 찾으면 맨 위 '김하늘님에게'도)
+  function findNames(lines, names) {
+    const out = [];
+    const list = [...new Set(names)].filter(n => /^[가-힣]{2,5}$/.test(n));
+    if (!list.length) return out;
+    for (const line of lines) {
+      const words = (line.words || []).filter(w => w.text && w.text.trim());
+      let compact = ''; const map = [];
+      words.forEach((w, i) => { for (const ch of w.text.replace(/\s+/g, '')) { compact += ch; map.push(i); } });
+      for (const n of list) {
+        let k = compact.indexOf(n);
+        while (k >= 0) {
+          const idx = [...new Set(map.slice(k, k + n.length))];
+          out.push({ type: 'name', text: n, box: unionBox(idx.map(i => words[i].bbox)) });
+          k = compact.indexOf(n, k + n.length);
+        }
+      }
     }
     return out;
   }
@@ -350,7 +391,7 @@
     return { level: top, label, cards };
   }
 
-  const api = { TYPES, CONTEXTS, applyContext, analyzeLines, scanPlainText, buildReport };
+  const api = { TYPES, CONTEXTS, applyContext, analyzeLines, findNames, scanPlainText, buildReport };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Detect = api;
 })(typeof window !== 'undefined' ? window : globalThis);

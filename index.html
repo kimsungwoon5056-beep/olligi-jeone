@@ -127,7 +127,8 @@
   /* ---------- 2. 확인 ---------- */
   .work { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 32px; align-items: start; }
   .stage { position: sticky; top: 12px; }
-  #view { width: 100%; height: auto; display: block; border-radius: 10px; background: var(--sheet); touch-action: none; cursor: crosshair; }
+  #view { width: 100%; height: auto; display: block; border-radius: 10px; background: var(--sheet); touch-action: pan-y; cursor: crosshair; }
+  body.drawing #view { touch-action: none; outline: 3px solid var(--tape); }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 13px; color: var(--mute); }
   .legend span::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border: 2.5px solid var(--c); background: var(--f, transparent); }
   .bar { height: 6px; background: var(--rule); margin: 4px 0 14px; }
@@ -294,7 +295,7 @@
           <span style="--c:var(--mute);--f:rgba(255,210,63,.35)">낮음</span>
           <span style="--c:#A7AAA2">가리지 않음</span>
         </div>
-        <p class="note" style="margin-top:6px">상자를 누르면 가리기에서 빠지고, 사진 위를 끌면 가릴 곳을 직접 더해요.</p>
+        <p class="note" style="margin-top:6px">상자를 누르면 가리기에서 빠져요. 놓친 곳은 사진 위를 끌어서 더해요 (폰에서는 "직접 가릴 곳 그리기"를 먼저 눌러요).</p>
       </div>
       <div>
         <div class="bar hidden" id="bar" role="progressbar" aria-label="분석 진행" aria-valuemin="0" aria-valuemax="100"><i id="barFill"></i></div>
@@ -315,6 +316,7 @@
           <button class="linkbtn" id="allOn" type="button">모두 가리기</button>
           <button class="linkbtn" id="allOff" type="button">모두 빼기</button>
           <label class="opt"><input type="checkbox" id="previewToggle">가린 모습 미리 보기</label>
+          <button class="linkbtn" id="drawBtn" type="button" aria-pressed="false">직접 가릴 곳 그리기</button>
           <button class="linkbtn" id="another" type="button">다른 사진 고르기</button>
         </div>
       </div>

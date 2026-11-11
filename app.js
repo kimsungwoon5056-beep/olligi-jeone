@@ -6,7 +6,8 @@
   const abs = p => new URL(p, location.href).href;
   const MP = abs('vendor/mediapipe');
   const FACE_MODEL = abs('vendor/mediapipe/blaze_face_short_range.tflite');
-  const WORK_MAX = 1600; // 분석용 긴 변 최대 길이
+  const WORK_AREA = 2200000; // 분석용 최대 화소 수 (약 1713×1285)
+  const WORK_SIDE = 2600;    // 분석용 긴 변 최대 길이
   const LEVEL_COLOR = { 3: '#D8432E', 2: '#B97E00', 1: '#61656D' };
   const OFF_COLOR = '#A7AAA2';
   const TAPE = '#FFD23F';
@@ -196,10 +197,11 @@
 
   // ---------- 분석 ----------
   async function start(img, buffer) {
-    if (S.busy) return;
+    if (S.busy) { showMsg('지금 사진을 분석하고 있어요. 끝나면 다른 사진을 골라 주세요.'); return; }
     S.busy = true;
     S.img = img; S.buffer = buffer; S.W = img.naturalWidth; S.H = img.naturalHeight;
-    S.k = Math.min(1, WORK_MAX / Math.max(S.W, S.H));
+    // 분석용 크기: 긴 변이 아니라 전체 화소 수로 줄인다. 세로로 긴 화면 캡처의 작은 글씨가 뭉개지지 않게.
+    S.k = Math.min(1, Math.sqrt(WORK_AREA / (S.W * S.H)), WORK_SIDE / Math.max(S.W, S.H));
     S.work.width = Math.round(S.W * S.k); S.work.height = Math.round(S.H * S.k);
     S.work.getContext('2d').drawImage(img, 0, 0, S.work.width, S.work.height);
     S.findings = []; S.gps = null; S.meta = null; S.qrFound = []; S.ocrText = ''; S.hover = null; S.preview = false; S.skewDeg = 0; S.scene = null;
@@ -267,6 +269,7 @@
       setStep('scene', '꺼 둠', true);
       stepNote.scene = sceneErr ? '불러오지 못함' : '꺼 둠';
     }
+    window.__olligiDebug.lastOcr = ocr;
     let bars = [];
     const qr = await timed('qr', async () => {
       bars = findBarcodes(S.work);
@@ -275,7 +278,7 @@
           .forEach(b => { if (!bars.some(o => overlap(o, b) > 0.4)) bars.push(b); });
       }
       const id = S.work.getContext('2d').getImageData(0, 0, S.work.width, S.work.height);
-      return jsQR(id.data, id.width, id.height, { inversionAttempts: 'dontInvert' });
+      return jsQR(id.data, id.width, id.height, { inversionAttempts: 'attemptBoth' }); // 다크 모드(흰 QR)도 읽는다
     });
 
     // 5) 판단
@@ -303,8 +306,11 @@
           });
           Detect.analyzeLines(data.lines || []).forEach(f => {
             if (!saneTextBox(f.box)) { console.info('상자 모양이 글자 같지 않아 뺐어요', f.type, f.text); return; }
-            const dup = found.some(g => (g.type === f.type || g.text === f.text) && overlap(g.box, f.box) > 0.5);
-            if (!dup) found.push(f);
+            // 같은 자리에서 여러 판이 찾은 것은 하나만 남긴다. 겹치면 더 위험한 종류(높은 단계)를 남긴다.
+            const lv = t => Detect.TYPES[t].level;
+            const j = found.findIndex(g => overlap(g.box, f.box) > 0.5 && (g.type === f.type || g.text === f.text || g.type === 'number' || f.type === 'number'));
+            if (j < 0) found.push(f);
+            else if (lv(f.type) > lv(found[j].type)) found[j] = f;
           });
         });
         S.ocrText = textLines.join('\n');
@@ -490,7 +496,7 @@
       }
       const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
       // 너무 작거나, 칸이 듬성듬성하면 바코드가 아니다
-      if (bw >= 8 && bh >= 3 && n >= 0.6 * bw * bh) {
+      if (bw >= 8 && bh >= 3 && bw >= 1.4 * bh && bw <= 14 * bh && n >= 0.6 * bw * bh) {
         const k = C / sc;
         boxes.push({ x0: x0 * k, y0: y0 * k, x1: (x1 + 1) * k, y1: (y1 + 1) * k });
       }
@@ -600,12 +606,15 @@
     const c = $('#view');
     c.addEventListener('pointerdown', e => {
       if (!S.img || S.busy) return;
-      c.setPointerCapture(e.pointerId);
       const p = toCanvas(e);
-      S.drag = { x: p.x, y: p.y, box: null };
+      // 손가락은 '직접 그리기'를 켰을 때만 끌어서 그린다. 아니면 누르기(켜고 끄기)만 하고 스크롤은 그대로 둔다.
+      const tapOnly = e.pointerType === 'touch' && !S.drawMode;
+      if (!tapOnly) c.setPointerCapture(e.pointerId);
+      S.drag = { x: p.x, y: p.y, cx: e.clientX, cy: e.clientY, box: null, tapOnly };
     });
+    c.addEventListener('pointercancel', () => { S.drag = null; draw(); });
     c.addEventListener('pointermove', e => {
-      if (!S.drag) return;
+      if (!S.drag || S.drag.tapOnly) return;
       const p = toCanvas(e);
       S.drag.box = { x0: Math.min(S.drag.x, p.x), y0: Math.min(S.drag.y, p.y), x1: Math.max(S.drag.x, p.x), y1: Math.max(S.drag.y, p.y) };
       draw();
@@ -613,6 +622,7 @@
     c.addEventListener('pointerup', e => {
       if (!S.drag) return;
       const p = toCanvas(e), d = S.drag; S.drag = null;
+      if (d.tapOnly && Math.hypot(e.clientX - d.cx, e.clientY - d.cy) > 10) return; // 스크롤하려던 것
       const b = d.box;
       if (b && (b.x1 - b.x0) > 12 && (b.y1 - b.y0) > 12) {
         S.findings.push({ type: 'manual', text: '', box: b, selected: true });
@@ -675,12 +685,15 @@
 
   async function save() {
     // 원본 크기로 다시 그린 뒤 가린다. 캔버스로 다시 저장하면 EXIF(위치·기기 정보)는 남지 않는다.
+    const MAX_PX = 16000000; // 아이폰 Safari는 이보다 큰 캔버스를 만들지 못한다 (최신 아이폰 기본 사진은 2,400만 화소)
+    const so = Math.min(1, Math.sqrt(MAX_PX / (S.W * S.H)));
     const out = document.createElement('canvas');
-    out.width = S.W; out.height = S.H;
+    out.width = Math.round(S.W * so); out.height = Math.round(S.H * so);
     const g = out.getContext('2d');
-    g.drawImage(S.img, 0, 0);
-    applyMasks(g, 1 / S.k);
+    g.drawImage(S.img, 0, 0, out.width, out.height);
+    applyMasks(g, so / S.k);
     const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.92));
+    if (!blob) { showMsg('사진을 저장하지 못했어요. 사진이 너무 크면 조금 줄여서 다시 넣어 주세요.'); $('#pickMsg').scrollIntoView({ block: 'center' }); return; }
     S.lastBlob = blob;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -849,6 +862,12 @@
   $('#previewToggle').onchange = e => { S.preview = e.target.checked; if (S.img) draw(); };
   $('#allOn').onclick = () => { S.findings.forEach(f => { f.selected = true; }); renderAll(); };
   $('#allOff').onclick = () => { S.findings.forEach(f => { f.selected = false; }); renderAll(); };
+  $('#drawBtn').onclick = () => {
+    S.drawMode = !S.drawMode;
+    document.body.classList.toggle('drawing', S.drawMode);
+    $('#drawBtn').textContent = S.drawMode ? '그리기 끝내기' : '직접 가릴 곳 그리기';
+    $('#drawBtn').setAttribute('aria-pressed', S.drawMode);
+  };
   $('#another').onclick = () => { $('#pick').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   $('#ctx').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setContext(b.dataset.v); });
   $('#speakBtn').onclick = speak;

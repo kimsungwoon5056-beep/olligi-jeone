@@ -1,7 +1,7 @@
 // 올리기 전에 - 오프라인용 서비스 워커
 // 앱과 AI 모델 파일을 이 기기에 보관해서, 한 번 연 뒤에는 인터넷 없이도 돌게 한다.
 // 이 서비스 워커는 같은 사이트의 파일을 '받아 두기'만 하고, 어디로도 보내지 않는다.
-const VER = 'olligi-v13';
+const VER = 'olligi-v14';
 const SHELL = ['./', 'index.html', 'app.js', 'detect.js', 'scene.js', 'hero.js', 'samples.js', 'manifest.webmanifest'];
 const CORE = [
   'icons/icon-192.png', 'icons/icon-512.png',

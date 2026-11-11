@@ -26,6 +26,7 @@
     barcode:  { label: '바코드', level: 2, why: '송장 바코드에는 운송장 번호가 들어 있어요. 찍어서 조회할 수 있어요.' },
     name:     { label: '이름', level: 1, why: '다른 정보와 합쳐지면 누구인지 알 수 있어요.' },
     email:    { label: '이메일', level: 1, why: '스팸이나 피싱 메일을 받을 수 있어요.' },
+    number:   { label: '번호', level: 1, why: '계좌·회원·주문 번호일 수 있어요. 무슨 번호인지 확인하고 필요하면 가리세요.' },
     manual:   { label: '직접 고른 곳', level: 1, why: '내가 직접 가리기로 한 곳이에요.' },
   };
 
@@ -38,19 +39,20 @@
       note: '누구나 보고 저장할 수 있는 곳이라 찾은 것을 모두 가렸어요.' },
     group: { label: '지인 단체방', icon: '👥', keep: ['name', 'face'],
       note: '아는 사람끼리라 이름·얼굴은 그대로 두었어요. 단체방 캡처는 밖으로 퍼지기 쉬워서 번호·주소는 가렸어요.' },
-    family: { label: '가족방', icon: '🏠', keep: ['name', 'face', 'child', 'school', 'phone', 'apt', 'address', 'plate', 'tracking', 'qr', 'qrplain', 'barcode'],
+    family: { label: '가족방', icon: '🏠', keep: ['name', 'face', 'child', 'school', 'phone', 'apt', 'address', 'plate', 'tracking', 'qr', 'qrplain', 'barcode', 'number'],
       note: '가족끼리라 이름·주소·전화번호는 그대로 두었어요. 그래도 주민번호·카드·계좌·비밀번호는 가렸어요. 캡처가 밖으로 나갈 수 있으니까요.' },
   };
   function applyContext(findings, ctx) {
     const c = CONTEXTS[ctx] || CONTEXTS.market;
-    findings.forEach(f => { if (f.type !== 'manual') f.selected = !c.keep.includes(f.type); });
+    // 사람이 직접 켜고 끈 것(touched)은 그대로 둔다
+    findings.forEach(f => { if (f.type !== 'manual' && !f.touched) f.selected = !c.keep.includes(f.type); });
     return findings;
   }
 
   const BANK =/(국민|신한|농협|우리|하나|기업|카카오|토스|새마을|우체국|수협|씨티|SC|케이뱅크|부산|대구|광주|경남|전북|제주|은행|계좌|입금|예금주)/;
   const PLATE_CH = '가나다라마거너더러머버서어저고노도로모보소오조구누두루무부수우주아바사자배하허호육공해국합';
   const RE = {
-    rrn: /(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)/g, // 주민등록번호와 외국인등록번호(5~8)
+    rrn: /(?<!\d)(\d{2})(\d{2})(\d{2})(-?)[1-8]\d{6}(?!\d)/g, // 주민등록번호와 외국인등록번호(5~8)
     card: /(?<!\d)\d{4}-?\d{4}-?\d{4}-?\d{4}(?!\d)/g,
     license: /(?<!\d)\d{2}-\d{2}-\d{6}-\d{2}(?!\d)/g,
     passport: /[MSRODG]\d{8}|[MSRODG]\d{3}[A-Z]\d{4}/g,
@@ -59,11 +61,13 @@
     digits3: /\d{2,6}-\d{2,6}-\d{2,7}/g,
     plate: new RegExp('\\d{2,3}[' + PLATE_CH + ']\\d{4}', 'g'),
     apt: /\d{1,4}동(\d{1,4}호)?|\d{3,4}호/g,
-    roadAddr: /[가-힣0-9]+(로|길)\d+(-\d+)?/,
+    // 도로명 + 건물번호. 뒤에 '만원·개·시' 같은 단위가 붙으면 주소가 아니다 (예: '여기로 3만원')
+    roadAddr: /(?<=[가-힣0-9])(로|길)\d{1,5}(-\d{1,4})?(?!\d)(?!(만|천|원|개|명|시|분|초|일|월|년|번째|위|등|층|kg|km|cm|%))/,
     region: /(특별시|광역시|특별자치|[가-힣]+(시|군|구|읍|면)|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)/,
     school: /[가-힣]{1,12}(초등학교|중학교|고등학교|유치원|어린이집|대학교)/g,
     child: /\d학년\d{1,2}반([가-힣]{2,4})?/g,
-    labeledName: /(받는분|받는사람|수령인|수취인|성명|이름|예금주|보내는분|고객명)[:：]?([가-힣]{2,5})/g,
+    nameLabel: /^(받는분|받는사람|받는이|수령인|수취인|성명|이름|예금주|보내는분|보내는사람|고객명)[:：]?$/,
+    nameLabelGlued: /^(받는분|받는사람|받는이|수령인|수취인|성명|이름|예금주|보내는분|보내는사람|고객명)[:：]?([가-힣]{2,5})$/,
     email: /[\w.+-]+@[\w-]+\.[\w.]+/g,
   };
 
@@ -80,6 +84,17 @@
     return sum % 10 === 0;
   }
 
+  // 이름이 아닌 흔한 말 (조사·어미·동사)
+  const NOT_NAME = /^(입니다|이에요|예요|이고|이며|이요|으로|에게|에서|까지|부터|님께|입금|계좌|은행|보내|드려|주세|해주|합니다|있어|없어|이다|이랑|하고|씨에게|번호|확인|입력|선택|변경|없음|전용|표|택배)/;
+  const NAME_HEAD_BAD = /^[을를은는에의도와과만으로표]/;
+  const okName = t => /^[가-힣]{2,5}$/.test(t) && !NOT_NAME.test(t) && !NAME_HEAD_BAD.test(t);
+  // 날짜(2026-11-12)·짧은 숫자는 계좌가 아니다
+  const isDate = t => /^(19|20)\d{2}-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])$/.test(t) || /^\d{2}-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])$/.test(t);
+  const digitCount = t => t.replace(/\D/g, '').length;
+  const validYMD = (mm, dd) => +mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31;
+  const REGION_NAME = /(특별시|광역시|특별자치|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)/;
+  const NOT_REGION = /^(다시|혹시|역시|반드시|잠시|즉시|동시|당시|오시|하시|보시|주시|가시|드시|이구|친구|가구|도구|입구|출구|요구|연구|통구|부군|아군|적군)$/;
+
   function unionBox(boxes) {
     return boxes.reduce((a, b) => ({
       x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0),
@@ -94,9 +109,16 @@
       const words = (line.words || []).filter(w => w.text && w.text.trim());
       if (!words.length) continue;
       let compact = '';
-      const map = [];
+      const map = [];   // 글자 → OCR 낱말 번호 (상자 위치용)
+      const tok = [];   // 글자 → 진짜 띄어쓰기 기준 덩어리 번호
+      // Tesseract는 한글을 '받','는','분'처럼 한 글자씩 낱말로 나누기도 한다.
+      // 그래서 낱말 사이 실제 간격이 글자 높이의 0.65배보다 넓을 때만 띄어쓰기로 본다 (굵은 한글은 글자 사이도 0.5배쯤 벌어진다).
+      const hs = words.map(w => w.bbox.y1 - w.bbox.y0).sort((x, y) => x - y);
+      const lineH = hs[hs.length >> 1] || 10;
+      let t = 0;
       words.forEach((w, i) => {
-        for (const ch of w.text.replace(/\s+/g, '')) { compact += ch; map.push(i); }
+        if (i > 0 && w.bbox.x0 - words[i - 1].bbox.x1 > lineH * 0.65) t++;
+        for (const ch of w.text.replace(/\s+/g, '')) { compact += ch; map.push(i); tok.push(t); }
       });
       // OCR이 숫자 0·1을 O·l로 잘못 읽는 경우를 바로잡는다 (글자 수는 그대로)
       compact = compact
@@ -104,6 +126,8 @@
         .replace(/[lI|](?=[\d-])|(?<=[\d-])[lI|]/g, '1')
         .replace(/[—–~]/g, '-');
       const used = new Array(compact.length).fill(false);
+      const wordStart = k => k === 0 || k >= compact.length || tok[k] !== tok[k - 1];
+      const wordEnd = k => k === compact.length || tok[k] !== tok[k - 1];
 
       const add = (type, s, e, opt = {}) => {
         if (e <= s) return false;
@@ -126,7 +150,14 @@
       };
 
       // 1) 신분증·카드·비밀번호, 주민등록번호, 전화번호 (가장 확실한 것부터)
-      run('card', RE.card, mm => (luhn(mm[0]) ? [mm.index, mm.index + mm[0].length] : null));
+      run('card', RE.card, mm => {
+        const s0 = mm.index, t = mm[0];
+        if (!luhn(t) || !/^[2-69]/.test(t)) return null;
+        // 4자리씩 띄어 쓰였거나 하이픈이 있거나, 근처에 카드라는 말이 있어야 카드로 본다
+        const grouped = /-/.test(t) || [4, 8, 12].every(o => wordStart(s0 + o));
+        if (!grouped && !/(카드|CARD|Card|VISA|Visa|MASTER|Master)/.test(compact)) return null;
+        return [s0, s0 + t.length];
+      });
       run('license', RE.license);
       run('passport', RE.passport, mm => (/(여권|PASSPORT|Passport|passport)/.test(compact) || /^[MSRODG]\d{3}[A-Z]/.test(mm[0])
         ? [mm.index, mm.index + mm[0].length] : null));
@@ -134,7 +165,8 @@
         const s = mm.index + mm[0].length - mm[2].length;
         return [s, s + mm[2].length];
       });
-      run('rrn', RE.rrn);
+      const rrnWord = /(주민|등록번호|외국인)/.test(compact);
+      run('rrn', RE.rrn, mm => (validYMD(mm[2], mm[3]) && (mm[4] === '-' || rrnWord) ? [mm.index, mm.index + mm[0].length] : null));
       run('phone', RE.phone);
       // 2) 숫자-숫자-숫자: 운송장 / 계좌
       const isTracking = /(운송장|송장|택배)/.test(compact);
@@ -143,20 +175,41 @@
       let m;
       while ((m = RE.digits3.exec(compact))) {
         const s = m.index, e = s + m[0].length;
+        const t = m[0];
+        if (isDate(t) || digitCount(t) < 9) continue; // 날짜·짧은 번호는 건너뛴다
         if (isTracking) add('tracking', s, e);
         else if (isBank) {
           if (add('account', s, e)) {
-            // 계좌 바로 뒤에 오는 2~4글자 한글은 예금주 이름으로 본다
-            const tail = compact.slice(e).match(/^([가-힣]{2,4})/);
-            if (tail) add('name', e, e + tail[1].length);
+            // 계좌 바로 뒤의 '낱말 하나'가 2~4글자 이름이면 예금주로 본다 ('입니다', '으로' 같은 말은 빼고)
+            // 숫자와 이름 사이 간격은 좁게 읽히기도 해서, 띄어쓰기 대신 '이어지는 한글 덩어리'를 본다
+            let k = e; while (k < compact.length && /[가-힣]/.test(compact[k]) && (k === e || !wordStart(k))) k++;
+            const next = compact.slice(e, k);
+            if (/^[가-힣]{2,4}$/.test(next) && okName(next)) add('name', e, k);
           }
-        } else add('account', s, e, { extra: { note: '계좌번호나 회원번호일 수 있어요' } });
+        } else add('number', s, e);
       }
       // 3) 차 번호판
       run('plate', RE.plate);
       // 4) 주소 (도로명 + 지역 이름이 같이 있으면 줄 전체를 주소로)
-      if (RE.roadAddr.test(compact) && RE.region.test(compact)) {
-        add('address', 0, compact.length, { overlap: true });
+      const road = RE.roadAddr.exec(compact);
+      if (road) {
+        // 도로명 앞에 시·도 이름이나 '○○시/군/구' 낱말이 있어야 주소로 본다 ('다시', '친구' 같은 말은 빼고)
+        // '가상로'처럼 도로명이 시작하는 낱말의 첫 글자 위치를 찾는다
+        let rs = road.index; while (rs > 0 && !wordStart(rs)) rs--;
+        const before = compact.slice(0, rs), inWord = compact.slice(rs, road.index);
+        // 띄어쓰기가 붙어 읽힌 경우('전북전주시덕진구가상로')도 같은 낱말 안의 지역 이름을 본다.
+        // '가상로45번길'처럼 '번길'이 붙은 도로명은 그것만으로도 주소로 본다.
+        let regionOk = REGION_NAME.test(before) || REGION_NAME.test(inWord)
+          || /[가-힣]{2,6}(시|군|구)[가-힣]{2,}$/.test(inWord) || /^\d{1,4}번길/.test(compact.slice(road.index + 1));
+        if (!regionOk) {
+          for (let a = 0; a < rs && !regionOk; a++) {
+            if (!wordStart(a)) continue;
+            let b = a; while (b < rs && !wordEnd(b + 1)) b++;
+            const w = compact.slice(a, b + 1);
+            if (/^[가-힣]{1,6}(시|군|구)$/.test(w) && !NOT_REGION.test(w)) regionOk = true;
+          }
+        }
+        if (regionOk) add('address', 0, compact.length, { overlap: true });
       }
       // 5) 동·호수
       run('apt', RE.apt, mm => {
@@ -167,10 +220,25 @@
       run('school', RE.school);
       run('child', RE.child);
       // 7) '받는분 홍길동' 같은 이름
-      run('name', RE.labeledName, mm => {
-        const s = mm.index + mm[0].length - mm[2].length;
-        return [s, s + mm[2].length];
-      });
+      // '받는분 홍길동', '이름: 홍길동'처럼 이름표 낱말 바로 뒤의 낱말을 이름으로 본다 ('이름을', '이름표에'는 빼고)
+      for (let a = 0; a < compact.length; a++) {
+        if (!wordStart(a)) continue;
+        let b = a; while (b + 1 < compact.length && !wordStart(b + 1)) b++;
+        const w = compact.slice(a, b + 1);
+        // '받는 분 홍길동'처럼 이름표가 두 낱말로 나뉜 경우: 두 낱말을 붙여서 본다
+        if (/^(받는|보내는)$/.test(w) && b + 1 < compact.length) {
+          let c = b + 1; while (c + 1 < compact.length && !wordStart(c + 1)) c++;
+          if (/^(분|사람|이)[:：]?$/.test(compact.slice(b + 1, c + 1))) b = c;
+        }
+        const w2 = compact.slice(a, b + 1);
+        const glued = w2.match(RE.nameLabelGlued);
+        if (glued && okName(glued[2])) { add('name', b + 1 - glued[2].length, b + 1); continue; }
+        if (RE.nameLabel.test(w2) && b + 1 < compact.length) {
+          let c = b + 1; while (c + 1 < compact.length && !wordStart(c + 1)) c++;
+          const next = compact.slice(b + 1, c + 1);
+          if (okName(next)) add('name', b + 1, c + 1);
+        }
+      }
       run('email', RE.email);
     }
     return out;
@@ -184,7 +252,9 @@
     if (test(RE.rrn)) found.push('주민등록번호');
     if (test(RE.phone)) found.push('전화번호');
     if (RE.roadAddr.test(compact) || test(RE.apt)) found.push('주소');
-    if (test(RE.digits3)) found.push('운송장·계좌 번호');
+    RE.digits3.lastIndex = 0;
+    const nums = (compact.match(RE.digits3) || []).filter(t => !isDate(t) && digitCount(t) >= 9);
+    if (nums.length) found.push('운송장·계좌 번호');
     if (/(받는분|수령인|[가-힣]{2,4}\|)/.test(text || '')) found.push('이름');
     return found;
   }
@@ -212,9 +282,14 @@
         ? { level: 3, title: '이 차의 주인이 몇 동에 사는지 알 수 있어요', body: '번호판과 아파트 동 번호가 함께 보여요. 차를 보고 주인을 찾아갈 수 있어요.' }
         : { level: 2, title: '차 번호가 보여요', body: '번호판으로 차 주인을 특정하거나, 사는 곳을 짐작할 수 있어요.' });
     }
-    if (has('child') || has('school')) {
+    if (has('child')) {
       cards.push({ level: 3, title: '아이의 학교와 이름을 알 수 있어요',
         body: '학교·학년·반·이름이 보여요. 낯선 사람이 이름을 부르며 다가오면 아이는 아는 사람이라고 믿기 쉬워요.' });
+    } else if (has('school')) {
+      const kid = on.some(f => f.type === 'school' && /(초등학교|중학교|고등학교|유치원|어린이집)/.test(f.text || ''));
+      cards.push(kid
+        ? { level: 2, title: '아이가 다니는 학교가 보여요', body: '학교 이름과 다른 정보가 합쳐지면 아이가 누구인지 알 수 있어요.' }
+        : { level: 1, title: '다니는 학교가 보여요', body: '학교 이름으로 어느 학교 학생인지 알 수 있어요. 학번이나 이름이 함께 보이지 않는지 확인하세요.' });
     }
     if (has('rrn')) {
       cards.push({ level: 3, title: '주민등록번호가 보여요', body: '명의 도용에 쓰일 수 있어요. 어떤 경우에도 그대로 올리지 마세요.' });
@@ -232,7 +307,10 @@
     if (has('qrplain') && !has('tracking') && !has('barcode') && !has('qr')) {
       cards.push({ level: 1, title: 'QR 코드가 보여요', body: 'QR 안에서 개인정보는 찾지 못했어요. 다만 내 프로필·결제 링크라면 낯선 사람이 찍어서 열어 볼 수 있어요.' });
     }
-    if (has('tracking') || has('qr') || has('barcode')) {
+    if (has('barcode') && !has('tracking') && !has('qr')) {
+      cards.push({ level: 1, title: '바코드가 보여요', body: '택배 송장 바코드라면 운송장 번호가 들어 있어 조회할 수 있어요. 상품 바코드라면 괜찮아요.' });
+    }
+    if (has('tracking') || has('qr')) {
       const inQr = (extra.qrFound || []).length ? ` QR을 읽어 보니 ${extra.qrFound.join('·')}까지 들어 있어요.` : '';
       cards.push({ level: 2, title: '택배 정보를 다시 조회할 수 있어요', body: '운송장 번호, 바코드, QR로 이름과 주소를 알아낼 수 있어요.' + inQr });
     }

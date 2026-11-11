@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 보안 규칙: 이 페이지는 자기 사이트(같은 주소) 말고는 어디에도 연결할 수 없다. AI 모델과 글꼴도 모두 이 사이트 안에 있다.
      사진을 몰래 보내는 코드가 끼어들어도 브라우저가 막는다. form 전송, 다른 사이트로 이미지 요청도 막는다. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src blob: mediastream:; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self' blob: mediastream:; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>올리기 전에</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -256,6 +256,7 @@
       </div>
     </div>
     <p class="lede">AI가 사진 속 글자·얼굴·QR·바코드와 사진 파일에 숨은 정보를 이 기기 안에서 찾아요. 남이 무엇을 알 수 있는지 알려 주고, 확인 한 번이면 가려요. 사진은 이 기기 밖으로 나가지 않아요.</p>
+    <p class="lede" style="margin-top:10px"><a href="#video">1분 23초 시연 영상 보기</a></p>
     <div class="status">
       <span class="model" id="modelStatus" role="status"></span>
       <span class="mute" id="sceneStatus">장면 AI 준비 대기</span>
@@ -344,6 +345,14 @@
       <img id="resultImg" alt="개인정보를 가린 사진">
       <p class="okline" id="okline"></p>
     </div>
+  </section>
+
+  <section class="block" id="video">
+    <h2>시연 영상</h2>
+    <video controls preload="none" playsinline poster="media/demo-poster.jpg" style="width:100%;max-width:960px;display:block;border-radius:10px;background:#000" aria-label="올리기 전에 시연 영상 (자막 포함)">
+      <source src="media/demo.mp4" type="video/mp4">
+    </video>
+    <p class="note">첫 화면 시연, 택배 송장 분석, 테이프로 저장, 단톡 캡처를 가족방 기준으로 다시 판단, 인터넷을 끊은 상태에서 지갑 사진 분석까지 담았어요. 영상 속 정보는 모두 가짜예요.</p>
   </section>
 
   <section class="block" id="safe">

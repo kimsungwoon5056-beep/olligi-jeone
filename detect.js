@@ -250,13 +250,13 @@
       const top = extra.scene[0];
       if (top.level > 0 && top.p >= 0.5) {
         const extraNote = on.length ? '' : ' 글자로는 찾은 것이 없으니, 사진을 한 번 더 직접 살펴보세요.';
-        cards.push({ level: top.level, title: `🧠 장면 AI: '${top.ko}' 같아요 (확신 ${Math.round(top.p * 100)}%)`, body: top.msg + extraNote });
+        cards.push({ level: top.level, title: `장면 AI가 보기에 '${top.ko}' 같아요 (확신 ${Math.round(top.p * 100)}%)`, body: top.msg + extraNote });
       }
     }
     if (extra.context && CONTEXTS[extra.context]) {
       const c = CONTEXTS[extra.context];
       const kept = findings.filter(f => f.type !== 'manual' && f.selected === false).length;
-      cards.push({ level: -1, title: `${c.icon} ${c.label}에 올린다고 보고 판단했어요`, body: c.note + (kept ? ` (그대로 둔 곳 ${kept}개)` : '') });
+      cards.push({ level: -1, title: `${c.label}에 올린다고 보고 판단했어요`, body: c.note + (kept ? ` (그대로 둔 곳 ${kept}개)` : '') });
     }
     if (!cards.filter(c => c.level >= 0).length) {
       cards.push({ level: 0, title: '눈에 띄는 개인정보를 찾지 못했어요',

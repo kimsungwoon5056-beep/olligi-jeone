@@ -7,13 +7,15 @@
   const MP = abs('vendor/mediapipe');
   const FACE_MODEL = abs('vendor/mediapipe/blaze_face_short_range.tflite');
   const WORK_MAX = 1600; // 분석용 긴 변 최대 길이
-  const LEVEL_COLOR = { 3: '#d93a3a', 2: '#e07b00', 1: '#8a8f00' };
+  const LEVEL_COLOR = { 3: '#D8432E', 2: '#B97E00', 1: '#61656D' };
+  const OFF_COLOR = '#A7AAA2';
+  const TAPE = '#FFD23F';
 
   const S = {
     img: null, buffer: null, W: 0, H: 0, k: 1, // k: 원본 → 분석 화면 배율
     work: document.createElement('canvas'),
     findings: [], gps: null, meta: null, qrFound: [], ocrText: '',
-    style: 'mosaic', drag: null, busy: false, lastBlob: null, hover: null, preview: false, skewDeg: 0,
+    style: 'tape', drag: null, busy: false, lastBlob: null, hover: null, preview: false, skewDeg: 0,
     context: 'market', sceneOn: true, scene: null, photoNo: 0,
     test: { on: false, photos: {} }, // 시험 모드 기록 (이 탭의 메모리에만 있음)
   };
@@ -187,7 +189,7 @@
     const total = Object.values(times).filter(v => v != null).reduce((a, b) => a + b, 0);
     rows.push(`<tr><th>합계</th><th>${fmtMs(total)}</th></tr>`);
     $('#perf').innerHTML = '<tr><th>단계</th><th>시간</th></tr>' + rows.join('');
-    $('#device').textContent = `측정 기기: CPU 코어 ${navigator.hardwareConcurrency || '?'}개 · 글자 읽기 일꾼 ${OCR_N}개 동시 실행 · 사진 ${S.W}×${S.H}${S.skewDeg && Math.abs(S.skewDeg) >= 2 ? ` · 기울기 ${Math.abs(S.skewDeg)}° 바로잡음` : ''} · 처음 실행에는 모델 받는 시간이 들어가요.`;
+    $('#device').textContent = `CPU 코어 ${navigator.hardwareConcurrency || '?'}개인 기기에서 글자 읽기 일꾼 ${OCR_N}개가 함께 읽었어요. 사진 크기는 ${S.W}×${S.H}이에요.${S.skewDeg && Math.abs(S.skewDeg) >= 2 ? ` 기울기 ${Math.abs(S.skewDeg)}°를 바로잡았어요.` : ''} 처음 한 번은 모델 받는 시간이 더 들어요.`;
     renderNet();
   }
 
@@ -495,8 +497,9 @@
     S.findings.forEach((f, i) => {
       const b = f.box, lv = Detect.TYPES[f.type].level;
       const hot = S.hover === i, dim = S.hover != null && !hot;
-      const col = f.selected ? (LEVEL_COLOR[lv] || '#d93a3a') : '#9aa1b3';
+      const col = f.selected ? (LEVEL_COLOR[lv] || LEVEL_COLOR[3]) : OFF_COLOR;
       g.globalAlpha = dim ? 0.35 : 1;
+      if (f.selected && !S.preview) { g.fillStyle = 'rgba(255,210,63,0.30)'; g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
       g.lineWidth = lw * (hot ? 2.5 : f.selected ? 1.5 : 1);
       g.strokeStyle = col;
       g.setLineDash(f.selected ? [] : [lw * 4, lw * 3]);
@@ -504,7 +507,7 @@
       g.setLineDash([]);
       // 번호 동그라미만 상자 모서리에 붙인다 (이름은 아래 목록에서 보여 줌)
       const cx = Math.max(r, b.x0), cy = Math.max(r, b.y0);
-      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = f.selected ? '#1C1F24' : OFF_COLOR; g.fill();
       g.lineWidth = Math.max(1.5, r / 6); g.strokeStyle = '#fff'; g.stroke();
       g.fillStyle = '#fff';
       g.font = `bold ${Math.round(r * 1.15)}px "Malgun Gothic", sans-serif`;
@@ -526,12 +529,12 @@
     S.lastReport = rep;
     const n = S.findings.filter(f => f.selected).length + (S.gps ? 1 : 0);
     $('#banner').className = 'banner l' + rep.level;
-    $('#banner').textContent = `${rep.label} · 가릴 곳 ${S.findings.filter(f => f.selected).length}개${S.gps ? ' + 숨은 위치 정보' : ''}`;
-    $('#risks').innerHTML = '<div class="hint" style="margin:0 0 4px">🤖 AI가 판단한 "이 사진으로 남이 알 수 있는 것"</div>' +
-      rep.cards.map(c => `<div class="risk l${c.level < 0 ? 'ctx' : c.level}"><b>${esc(c.title)}</b><p>${esc(c.body)}</p></div>`).join('');
+    $('#banner').innerHTML = `<strong>${esc(rep.label)}</strong><span>가릴 곳 ${S.findings.filter(f => f.selected).length}개${S.gps ? ', 그리고 숨은 위치 정보' : ''}</span>`;
+    const LV = { 3: '높음', 2: '중간', 1: '낮음', 0: '안전', '-1': '기준' };
+    $('#risks').innerHTML = rep.cards.map(c => `<div class="risk l${c.level < 0 ? 'ctx' : c.level}"><span class="lv">${LV[c.level]}</span><b>${esc(c.title)}</b><p>${esc(c.body)}</p></div>`).join('');
     // 장면 AI가 본 것 (위 3개를 막대로)
     if (S.scene && S.scene.length) {
-      $('#sceneBox').innerHTML = '<b>🧠 장면 판단 AI가 본 이 사진</b>' + S.scene.slice(0, 3).map(s =>
+      $('#sceneBox').innerHTML = '<b>장면 판단 AI가 본 이 사진</b>' + S.scene.slice(0, 3).map(s =>
         `<div class="sc"><span>${esc(s.ko)}</span><i><em style="width:${Math.round(s.p * 100)}%"></em></i><span>${Math.round(s.p * 100)}%</span></div>`).join('');
       $('#sceneBox').classList.remove('hidden');
     } else $('#sceneBox').classList.add('hidden');
@@ -543,7 +546,7 @@
     S.findings.forEach((f, i) => {
       const t = Detect.TYPES[f.type];
       const li = document.createElement('li');
-      const col = f.selected ? (LEVEL_COLOR[t.level] || '#d93a3a') : '#9aa1b3';
+      const col = f.selected ? '#1C1F24' : OFF_COLOR;
       li.innerHTML = `<label><input type="checkbox" ${f.selected ? 'checked' : ''} aria-label="${i + 1}번 ${t.label} 가리기">
         <i class="no" style="background:${col}">${i + 1}</i>
         <div><span class="kind">${t.label}</span><span class="pill l${t.level}">${['', '낮음', '중간', '높음'][t.level]}</span>
@@ -557,8 +560,8 @@
     });
     if (S.gps) {
       const li = document.createElement('li');
-      li.innerHTML = `<input type="checkbox" checked disabled><i class="no" style="background:#d93a3a">📍</i><div><span class="kind">숨은 위치 정보 (GPS)</span><span class="pill l3">높음</span>
-        <span class="why">사진에는 안 보이지만 파일 안에 있어요. 저장하면 항상 지워져요.</span></div>`;
+      li.innerHTML = `<label><input type="checkbox" checked disabled><i class="no" style="background:#1C1F24">G</i><div><span class="kind">숨은 위치 정보 (GPS)</span><span class="pill l3">높음</span>
+        <span class="why">사진에는 안 보이지만 파일 안에 있어요. 저장하면 항상 지워져요.</span></div></label>`;
       list.appendChild(li);
     }
     $('#findCount').textContent = `${n}개`;
@@ -612,7 +615,22 @@
       const x = Math.floor(f.box.x0 * scale), y = Math.floor(f.box.y0 * scale);
       const w = Math.ceil((f.box.x1 - f.box.x0) * scale), h = Math.ceil((f.box.y1 - f.box.y0) * scale);
       if (w < 1 || h < 1) return;
-      if (S.style === 'bar') {
+      if (S.style === 'tape') {
+        // 노란 테이프: 끝이 찢어진 모양으로, 글자가 비치지 않게 꽉 채운다
+        const p = Math.max(3, Math.min(w, h) * 0.08), z = Math.max(3, h / 8);
+        g.save();
+        g.beginPath();
+        g.moveTo(x - p, y - p); g.lineTo(x + w + p, y - p);
+        for (let k = 1; k <= 6; k++) g.lineTo(x + w + p - (k % 2 ? z : 0), y - p + (h + 2 * p) * k / 6);
+        g.lineTo(x - p, y + h + p);
+        for (let k = 5; k >= 0; k--) g.lineTo(x - p + (k % 2 ? z : 0), y - p + (h + 2 * p) * k / 6);
+        g.closePath();
+        g.fillStyle = TAPE; g.fill();
+        g.clip();
+        g.strokeStyle = 'rgba(160,120,0,0.18)'; g.lineWidth = Math.max(1, h / 30);
+        for (let sx = x - h - p; sx < x + w + p; sx += Math.max(5, h / 6)) { g.beginPath(); g.moveTo(sx, y + h + p); g.lineTo(sx + h + 2 * p, y - p); g.stroke(); }
+        g.restore();
+      } else if (S.style === 'bar') {
         g.fillStyle = '#111'; g.fillRect(x, y, w, h);
       } else if (S.style === 'blur') {
         g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
@@ -657,7 +675,7 @@
     const masked = S.findings.filter(f => f.selected).length;
     $('#okline').textContent = gpsLeft
       ? '⚠️ 위치 정보가 남아 있어요. 다시 시도해 주세요.'
-      : `✓ ${masked}곳을 가렸어요 · ✓ 저장한 파일을 다시 열어 보니 위치·기기 정보가 없어요`;
+      : `${masked}곳을 가렸어요. 저장한 파일을 다시 열어 보니 위치·기기 정보도 없어요.`;
     const canShare = navigator.canShare && navigator.canShare({ files: [new File([blob], 'photo.jpg', { type: 'image/jpeg' })] });
     $('#shareBtn').classList.toggle('hidden', !canShare);
     recordTest();
@@ -726,7 +744,7 @@
     if (!S.sceneOn || !window.Scene) return;
     Scene.load(t => { $('#sceneStatus').textContent = t; }).then(() => {
       sceneReady = true;
-      $('#sceneStatus').textContent = '✓ 장면 판단 AI 준비 완료';
+      $('#sceneStatus').textContent = '장면 판단 AI도 준비됐어요';
     }).catch(e => {
       console.error(e);
       $('#sceneStatus').textContent = '장면 판단 AI를 불러오지 못했어요 (글자·얼굴 찾기는 그대로 돼요)';
@@ -784,6 +802,7 @@
   // ---------- 시작 ----------
   renderSamples();
   bindCanvas();
+  $('label[for="file"]').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
   $('#file').onchange = e => { const f = e.target.files[0]; if (f) loadFromFile(f); e.target.value = ''; };
   $('#camBtn').onclick = openCam;
   $('#camClose').onclick = closeCam;
@@ -825,7 +844,7 @@
     Promise.all([getOcrPool(), getFace()]).then(() => {
       // 준비가 끝난 순간부터 이 페이지가 바깥으로 보내는 요청을 센다
       readyAt = performance.now();
-      setModel('✓ AI 준비 완료 · 이제 인터넷을 끊어도 분석돼요 (비행기 모드로 직접 확인해 보세요)', 'ok');
+      setModel('AI 준비 완료. 이제 인터넷을 끊어도 분석돼요.', 'ok');
       renderNet();
       loadScene(); // 글자·얼굴 AI가 준비된 뒤에 장면 AI를 이어서 받는다
     }).catch(e => {

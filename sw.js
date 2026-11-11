@@ -1,7 +1,7 @@
 // 올리기 전에 - 오프라인용 서비스 워커
 // 앱과 AI 모델 파일을 이 기기에 보관해서, 한 번 연 뒤에는 인터넷 없이도 돌게 한다.
 // 이 서비스 워커는 같은 사이트의 파일을 '받아 두기'만 하고, 어디로도 보내지 않는다.
-const VER = 'olligi-v5';
+const VER = 'olligi-v6';
 const SHELL = ['./', 'index.html', 'app.js', 'detect.js', 'scene.js', 'samples.js', 'manifest.webmanifest'];
 const CORE = [
   'icons/icon-192.png', 'icons/icon-512.png',
@@ -14,7 +14,7 @@ const CORE = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VER).then(c => c.addAll([...SHELL, ...CORE])).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VER).then(c => c.addAll([...SHELL, ...CORE].map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -35,7 +35,8 @@ self.addEventListener('fetch', e => {
     })));
   } else {
     // 앱 화면 파일: 인터넷이 되면 새 버전, 안 되면 보관본
-    e.respondWith(fetch(e.request).then(res => {
+    // cache: 'no-cache' = 브라우저 캐시에 오래된 파일이 있어도 서버에 새 버전이 있는지 꼭 확인
+    e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(VER).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(hit => hit || caches.match('index.html'))));

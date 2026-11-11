@@ -760,7 +760,8 @@
     if (!S.sceneOn || !window.Scene) return;
     Scene.load(t => { $('#sceneStatus').textContent = t; }).then(() => {
       sceneReady = true;
-      $('#sceneStatus').textContent = '장면 판단 AI도 준비됐어요';
+      $('#sceneStatus').textContent = Scene.info.engine === '1.16' ? '장면 판단 AI도 준비됐어요 (예비 실행 엔진)' : '장면 판단 AI도 준비됐어요';
+      $('#sceneErr').textContent = '';
     }).catch(e => {
       console.error(e);
       sceneErr = (e && (e.message || String(e)) || '알 수 없는 오류').slice(0, 120);
@@ -770,6 +771,7 @@
       again.type = 'button'; again.className = 'linkbtn'; again.textContent = '다시 불러오기';
       again.onclick = () => { Scene.reset(); S.sceneOn = true; $('#sceneToggle').checked = true; sceneErr = ''; loadScene(); };
       $('#sceneStatus').append(again);
+      $('#sceneErr').textContent = `이 기기에서는 장면 판단 AI를 불러오지 못했어요 (${sceneErr})`;
       S.sceneOn = false; $('#sceneToggle').checked = false;
     });
   }

@@ -12,6 +12,7 @@
 | `misc/jsQR.min.js` | jsQR 1.4.0 | QR 읽기 | Apache-2.0 (`misc/jsQR-LICENSE.txt`) | https://github.com/cozmo/jsQR |
 | `misc/exifr-lite.umd.js` | exifr 7.1.3 | 사진 속 숨은 정보 읽기 | MIT (`misc/exifr-LICENSE.txt`) | https://github.com/MikeKovarik/exifr |
 | `ort/` | ONNX Runtime Web 1.20.1 | 장면 판단 AI 실행 | MIT (`ort/LICENSE.txt`) | https://github.com/microsoft/onnxruntime |
+| `ort16/` | ONNX Runtime Web 1.16.3 (한 일꾼용 wasm-core) | 1.20이 안 되는 기기에서 쓰는 예비 실행 엔진 | MIT (`ort16/LICENSE.txt`) | https://github.com/microsoft/onnxruntime |
 | `clip/mobileclip_s0_vision_fp16.onnx` | MobileCLIP S0 이미지 모델 (Xenova의 ONNX·16비트 변환본) | 장면 판단 AI | **Apple ML Research Model License** (`clip/LICENSE_MODELS.txt`) | https://github.com/apple/ml-mobileclip · https://huggingface.co/Xenova/mobileclip_s0 |
 | `clip/scene_labels.json` | 위 모델의 문장 모델로 미리 계산한 장면 설명 임베딩 (직접 만듦) | 장면 판단 AI | 위와 같음 | `tools/make_scene_labels.py` |
 

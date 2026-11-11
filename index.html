@@ -277,6 +277,7 @@
       <input id="file" type="file" accept="image/*" class="hidden">
       <button class="btn line" id="camBtn" type="button">카메라로 찍기</button>
       <label class="opt"><input type="checkbox" id="sceneToggle" checked>장면 판단 AI도 쓰기 <span class="mute small">(신분증·택배·교복 같은 장면을 알아봐요. 처음 한 번 약 34MB)</span></label>
+      <span class="small" id="sceneErr" role="status" style="color:var(--risk)"></span>
     </div>
     <p class="note">예시 사진의 이름·전화번호·주소·카드번호는 모두 가짜예요. 처음 한 번은 AI 모델을 받느라 조금 걸려요.</p>
     <p class="msg hidden" id="pickMsg" role="alert"></p>

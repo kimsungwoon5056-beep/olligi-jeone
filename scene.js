@@ -4,21 +4,61 @@
 (function () {
   'use strict';
   const abs = p => new URL(p, location.href).href;
-  let ready = null, labels = null, scale = 100;
+  let ready = null, labels = null, scale = 100, buf = null;
+  let O = null;          // 지금 쓰는 실행 엔진 (ONNX Runtime)
+  const info = { engine: '' };
+
+  // 실행 엔진은 두 가지를 준비해 둔다.
+  //  1) ONNX Runtime 1.20 (기본)  2) 1.16 '한 일꾼용' (1번이 안 되는 기기, 예: 일부 아이폰 Safari)
+  // 1번이 실패하면 2번을 그때만 불러와서 다시 시도한다.
+  function loadOrt16() {
+    return new Promise((res, rej) => {
+      const prev = window.ort;
+      const s = document.createElement('script');
+      s.src = abs('vendor/ort16/ort.wasm-core.min.js');
+      s.onload = () => { const o = window.ort; window.ort = prev; res(o); };
+      s.onerror = () => rej(new Error('예비 실행 엔진 파일을 받지 못했어요'));
+      document.head.appendChild(s);
+    });
+  }
+  const msg = e => (e && (e.message || String(e)) || '알 수 없는 오류').slice(0, 80);
 
   function load(onProgress) {
     if (!ready) {
       ready = (async () => {
-        ort.env.wasm.wasmPaths = abs('vendor/ort/');
-        ort.env.wasm.numThreads = 1; // 별도 서버 설정 없이 어디서나 돌도록 한 줄로 실행
-        onProgress && onProgress('장면 AI 받는 중…');
-        const [buf, lab] = await Promise.all([
-          fetchWithProgress(abs('vendor/clip/mobileclip_s0_vision_fp16.onnx'), onProgress),
-          fetch(abs('vendor/clip/scene_labels.json')).then(r => r.json()),
-        ]);
-        labels = lab.labels.map(l => ({ ...l, emb: Float32Array.from(l.emb) }));
-        scale = lab.scale || 100;
-        return ort.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+        if (!buf) {
+          onProgress && onProgress('장면 AI 받는 중…');
+          const [b, lab] = await Promise.all([
+            fetchWithProgress(abs('vendor/clip/mobileclip_s0_vision_fp16.onnx'), onProgress),
+            fetch(abs('vendor/clip/scene_labels.json')).then(r => r.json()),
+          ]);
+          labels = lab.labels.map(l => ({ ...l, emb: Float32Array.from(l.emb) }));
+          scale = lab.scale || 100;
+          buf = b;
+        }
+        let first = null;
+        if (!/[?&]ort=16/.test(location.search)) { // ?ort=16 이면 예비 엔진을 바로 시험한다
+          try {
+            O = window.ort;
+            O.env.wasm.wasmPaths = abs('vendor/ort/');
+            O.env.wasm.numThreads = 1; // 별도 서버 설정 없이 어디서나 돌도록 한 줄로 실행
+            const s = await O.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+            info.engine = '1.20';
+            return s;
+          } catch (e) { first = e; console.warn('실행 엔진 1.20 실패, 1.16 한 일꾼용으로 다시 시도', e); }
+        }
+        onProgress && onProgress('장면 AI를 다른 방식으로 다시 불러오는 중…');
+        try {
+          O = await loadOrt16();
+          O.env.wasm.wasmPaths = abs('vendor/ort16/');
+          O.env.wasm.numThreads = 1;
+          O.env.wasm.proxy = false;
+          const s = await O.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+          info.engine = '1.16';
+          return s;
+        } catch (e) {
+          throw new Error(first ? `1.20: ${msg(first)} / 1.16: ${msg(e)}` : msg(e));
+        }
       })();
       ready.catch(() => { ready = null; });
     }
@@ -59,7 +99,7 @@
     for (let i = 0; i < S * S; i++) {
       x[i] = d[i * 4] / 255; x[S * S + i] = d[i * 4 + 1] / 255; x[2 * S * S + i] = d[i * 4 + 2] / 255;
     }
-    return new ort.Tensor('float32', x, [1, 3, S, S]);
+    return new O.Tensor('float32', x, [1, 3, S, S]);
   }
 
   // 장면별 확률을 돌려준다: [{key, ko, level, msg, p}] (높은 순)
@@ -84,5 +124,5 @@
   // 불러오기에 실패했을 때 처음부터 다시 받을 수 있게 한다
   function reset() { ready = null; }
 
-  window.Scene = { load, classify, reset };
+  window.Scene = { load, classify, reset, info };
 })();

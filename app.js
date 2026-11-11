@@ -8,7 +8,7 @@
   const FACE_MODEL = abs('vendor/mediapipe/blaze_face_short_range.tflite');
   const WORK_AREA = 2200000; // 분석용 최대 화소 수 (약 1713×1285)
   const WORK_SIDE = 2600;    // 분석용 긴 변 최대 길이
-  const LEVEL_COLOR = { 3: '#D8432E', 2: '#B97E00', 1: '#61656D' };
+  const LEVEL_COLOR = { 3: '#B83A28', 2: '#8F6200', 1: '#61656D' };
   const OFF_COLOR = '#A7AAA2';
   const TAPE = '#FFD23F';
 

@@ -17,7 +17,7 @@
     work: document.createElement('canvas'),
     findings: [], gps: null, meta: null, qrFound: [], ocrText: '',
     style: 'tape', drag: null, busy: false, lastBlob: null, hover: null, preview: false, skewDeg: 0,
-    context: 'market', sceneOn: true, scene: null, photoNo: 0,
+    context: 'market', sceneOn: true, scene: null, photoNo: 0, batch: [], cur: -1, batchFiles: null,
     test: { on: false, photos: {} }, // 시험 모드 기록 (이 탭의 메모리에만 있음)
   };
 
@@ -102,12 +102,15 @@
   }
   function showMsg(t) { const m = $('#pickMsg'); m.textContent = t; m.classList.toggle('hidden', !t); }
   async function loadFromDataUrl(url) {
-    try { showMsg(''); start(await loadImage(url), dataUrlToBuffer(url)); }
+    if (S.busy) { showMsg('지금 사진을 분석하고 있어요. 끝나면 다른 사진을 골라 주세요.'); return; }
+    try { showMsg(''); clearBatch(); start(await loadImage(url), dataUrlToBuffer(url)); }
     catch (e) { showMsg('사진을 열 수 없어요. 다른 사진을 골라 주세요.'); }
   }
   async function loadFromFile(file) {
+    if (S.busy) { showMsg('지금 사진을 분석하고 있어요. 끝나면 다른 사진을 골라 주세요.'); return; }
     try {
       showMsg('');
+      clearBatch();
       const buf = await file.arrayBuffer();
       const url = URL.createObjectURL(file);
       start(await loadImage(url), buf);
@@ -196,9 +199,10 @@
   }
 
   // ---------- 분석 ----------
-  async function start(img, buffer) {
+  async function start(img, buffer, opt = {}) {
     if (S.busy) { showMsg('지금 사진을 분석하고 있어요. 끝나면 다른 사진을 골라 주세요.'); return; }
     S.busy = true;
+    S.work = document.createElement('canvas'); // 사진마다 따로 (여러 장을 오갈 때 섞이지 않게)
     S.img = img; S.buffer = buffer; S.W = img.naturalWidth; S.H = img.naturalHeight;
     // 분석용 크기: 긴 변이 아니라 전체 화소 수로 줄인다. 세로로 긴 화면 캡처의 작은 글씨가 뭉개지지 않게.
     S.k = Math.min(1, Math.sqrt(WORK_AREA / (S.W * S.H)), WORK_SIDE / Math.max(S.W, S.H));
@@ -213,7 +217,7 @@
     $('#result').classList.add('hidden');
     resetSteps();
     draw();
-    $('#workCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!opt.noScroll) $('#workCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // 1) 숨은 정보 (EXIF)
     await timed('meta', async () => {
@@ -565,6 +569,7 @@
     } else $('#sceneBox').classList.add('hidden');
     $('#report').classList.remove('hidden');
     recordTest(); // 시험 모드면 분석이 끝난 순간, 그리고 상자를 고칠 때마다 바로 센다
+    if (S.batch.length) renderStrip();
 
     const list = $('#finds');
     list.innerHTML = '';
@@ -639,8 +644,8 @@
   function area(b) { return (b.x1 - b.x0) * (b.y1 - b.y0); }
 
   // ---------- 가리기 ----------
-  function applyMasks(g, scale) {
-    S.findings.filter(f => f.selected).forEach(f => {
+  function applyMasks(g, scale, findings = S.findings) {
+    findings.filter(f => f.selected).forEach(f => {
       const x = Math.floor(f.box.x0 * scale), y = Math.floor(f.box.y0 * scale);
       const w = Math.ceil((f.box.x1 - f.box.x0) * scale), h = Math.ceil((f.box.y1 - f.box.y0) * scale);
       if (w < 1 || h < 1) return;
@@ -683,16 +688,21 @@
     });
   }
 
+  // 가린 사진(JPEG)을 만든다. 원본 크기로 다시 그리기 때문에 EXIF(위치·기기 정보)는 남지 않는다.
+  async function maskedBlob(r) {
+    const MAX_PX = 16000000; // 아이폰 Safari는 이보다 큰 캔버스를 만들지 못한다 (최신 아이폰 기본 사진은 2,400만 화소)
+    const so = Math.min(1, Math.sqrt(MAX_PX / (r.W * r.H)));
+    const out = document.createElement('canvas');
+    out.width = Math.round(r.W * so); out.height = Math.round(r.H * so);
+    const g = out.getContext('2d');
+    g.drawImage(r.img, 0, 0, out.width, out.height);
+    applyMasks(g, so / r.k, r.findings);
+    return new Promise(res => out.toBlob(res, 'image/jpeg', 0.92));
+  }
+
   async function save() {
     // 원본 크기로 다시 그린 뒤 가린다. 캔버스로 다시 저장하면 EXIF(위치·기기 정보)는 남지 않는다.
-    const MAX_PX = 16000000; // 아이폰 Safari는 이보다 큰 캔버스를 만들지 못한다 (최신 아이폰 기본 사진은 2,400만 화소)
-    const so = Math.min(1, Math.sqrt(MAX_PX / (S.W * S.H)));
-    const out = document.createElement('canvas');
-    out.width = Math.round(S.W * so); out.height = Math.round(S.H * so);
-    const g = out.getContext('2d');
-    g.drawImage(S.img, 0, 0, out.width, out.height);
-    applyMasks(g, so / S.k);
-    const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.92));
+    const blob = await maskedBlob(S);
     if (!blob) { showMsg('사진을 저장하지 못했어요. 사진이 너무 크면 조금 줄여서 다시 넣어 주세요.'); $('#pickMsg').scrollIntoView({ block: 'center' }); return; }
     S.lastBlob = blob;
     const url = URL.createObjectURL(blob);
@@ -711,6 +721,139 @@
     const canShare = navigator.canShare && navigator.canShare({ files: [new File([blob], 'photo.jpg', { type: 'image/jpeg' })] });
     $('#shareBtn').classList.toggle('hidden', !canShare);
     recordTest();
+  }
+
+  // ---------- 여러 장 한 번에 ----------
+  // 사진마다 분석 결과를 따로 보관하고, 띠에서 골라 오가며 확인한다. 저장은 한꺼번에.
+  const MAX_BATCH = 10;
+  const KEEP = ['img', 'buffer', 'W', 'H', 'k', 'work', 'findings', 'gps', 'meta', 'qrFound', 'ocrText', 'scene', 'skewDeg', 'photoNo'];
+  function snapshot(name) {
+    const r = { name };
+    KEEP.forEach(k => { r[k] = S[k]; });
+    r.times = { ...times }; r.stepNote = { ...stepNote };
+    return r;
+  }
+  function restore(r) {
+    KEEP.forEach(k => { S[k] = r[k]; });
+    times = { ...r.times }; stepNote = { ...r.stepNote };
+    S.hover = null; S.preview = false; $('#previewToggle').checked = false;
+    $('#result').classList.add('hidden'); $('#shareBtn').classList.add('hidden');
+    // 단계 표시를 그 사진의 기록으로 다시 채운다
+    STEPS.forEach(([id]) => setStep(id, times[id] == null ? (stepNote[id] || '-') : `✓ ${fmtMs(times[id])}`, times[id] != null));
+    renderAll(); renderPerf();
+  }
+  function clearBatch() {
+    S.batch = []; S.cur = -1; S.batchFiles = null;
+    $('#batch').classList.add('hidden'); $('#saveAllBtn').classList.add('hidden');
+  }
+  function reportOf(r) {
+    return Detect.buildReport(r.findings, { gps: r.gps, meta: r.meta, qrFound: r.qrFound, context: S.context, scene: r.scene });
+  }
+  function renderStrip(pending = 0) {
+    const box = $('#batchList');
+    box.innerHTML = '';
+    const tally = { 3: 0, 2: 0, 1: 0, 0: 0 };
+    S.batch.forEach((r, i) => {
+      const rep = reportOf(r);
+      tally[Math.min(3, Math.max(0, rep.level))]++;
+      const n = r.findings.filter(f => f.selected).length + (r.gps ? 1 : 0);
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'bitem l' + rep.level + (i === S.cur ? ' on' : '');
+      b.setAttribute('aria-pressed', i === S.cur);
+      b.setAttribute('aria-label', `${i + 1}번째 사진, ${rep.label}, 가릴 곳 ${n}개`);
+      b.innerHTML = `<img alt="" src="${r.img.src}"><span class="bl">${rep.label.replace('위험 ', '')}</span><span class="bn">가릴 곳 ${n}</span>`;
+      b.onclick = () => { if (S.busy || i === S.cur) return; S.cur = i; restore(r); };
+      box.appendChild(b);
+    });
+    for (let k = 0; k < pending; k++) {
+      const d = document.createElement('div'); d.className = 'bitem wait'; d.textContent = '기다리는 중'; box.appendChild(d);
+    }
+    const done = S.batch.length;
+    $('#batchSum').textContent = pending
+      ? `사진 ${done + pending}장 중 ${done}장 분석했어요…`
+      : `사진 ${done}장 — 위험 높음 ${tally[3]}장, 중간 ${tally[2]}장, 낮음 ${tally[1] + tally[0]}장. 사진을 누르면 그 사진의 결과를 볼 수 있어요.`;
+    $('#batch').classList.remove('hidden');
+    $('#saveAllBtn').classList.toggle('hidden', !!pending);
+  }
+  async function loadFiles(list) {
+    let files = [...list].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
+    if (!files.length) return;
+    if (files.length === 1) return loadFromFile(files[0]);
+    if (S.busy) { showMsg('지금 사진을 분석하고 있어요. 끝나면 다시 골라 주세요.'); return; }
+    if (files.length > MAX_BATCH) { showMsg(`한 번에 ${MAX_BATCH}장까지 볼 수 있어요. 앞의 ${MAX_BATCH}장만 분석할게요.`); files = files.slice(0, MAX_BATCH); }
+    else showMsg('');
+    clearBatch();
+    for (let i = 0; i < files.length; i++) {
+      renderStrip(files.length - i);
+      try {
+        const buf = await files[i].arrayBuffer();
+        const img = await loadImage(URL.createObjectURL(files[i]));
+        await start(img, buf, { noScroll: i > 0 });
+        S.batch.push(snapshot(files[i].name)); S.cur = S.batch.length - 1;
+      } catch (e) {
+        console.error(e);
+        showMsg(`${files[i].name} 사진은 열 수 없어서 건너뛰었어요.`);
+      }
+    }
+    renderStrip();
+    if (S.batch.length) { S.cur = 0; restore(S.batch[0]); $('#workCard').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+
+  // 아주 작은 ZIP 만들기 (압축 없이 묶기만. JPEG은 이미 압축돼 있다)
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = u => { let c = 0xFFFFFFFF; for (let i = 0; i < u.length; i++) c = CRC[(c ^ u[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  async function makeZip(files) {
+    const enc = new TextEncoder(), parts = [], central = [];
+    let off = 0;
+    for (const f of files) {
+      const data = new Uint8Array(await f.arrayBuffer()), name = enc.encode(f.name), crc = crc32(data);
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+      h.setUint16(10, 0, true); h.setUint16(12, 0x21, true); h.setUint32(14, crc, true);
+      h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+      parts.push(new Uint8Array(h.buffer), name, data);
+      const c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+      c.setUint16(10, 0, true); c.setUint16(12, 0, true); c.setUint16(14, 0x21, true); c.setUint32(16, crc, true);
+      c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true);
+      c.setUint32(42, off, true);
+      central.push(new Uint8Array(c.buffer), name);
+      off += 30 + name.length + data.length;
+    }
+    const csize = central.reduce((a, b) => a + b.length, 0);
+    const e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+    e.setUint32(12, csize, true); e.setUint32(16, off, true);
+    return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: 'application/zip' });
+  }
+
+  async function saveAll() {
+    const btn = $('#saveAllBtn');
+    // 폰: 한 번 더 누르면 공유 창(사진 앱에 저장)을 연다. 공유 창은 사용자가 누른 순간에만 열 수 있어서 두 번으로 나눈다.
+    if (S.batchFiles) {
+      try { await navigator.share({ files: S.batchFiles }); } catch (e) { /* 취소 */ }
+      return;
+    }
+    btn.disabled = true; btn.textContent = '가리는 중…';
+    const files = [];
+    for (let i = 0; i < S.batch.length; i++) {
+      const blob = await maskedBlob(S.batch[i]);
+      if (blob) files.push(new File([blob], `olligi-jeone_${String(i + 1).padStart(2, '0')}.jpg`, { type: 'image/jpeg' })); // zip 안 이름은 영문 (Windows에서 한글 이름이 깨지지 않게)
+    }
+    btn.disabled = false;
+    const n = S.batch.reduce((a, r) => a + r.findings.filter(f => f.selected).length, 0);
+    if (navigator.canShare && navigator.canShare({ files }) && /Android|iPhone|iPad|iPod/.test(navigator.userAgent)) {
+      S.batchFiles = files;
+      btn.textContent = `사진 ${files.length}장 공유·저장하기`;
+      $('#batchSum').textContent = `${files.length}장에서 ${n}곳을 가렸어요. 버튼을 한 번 더 누르면 공유 창에서 사진 앱에 저장할 수 있어요.`;
+      return;
+    }
+    const zip = await makeZip(files);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zip); a.download = '올리기전에_가린사진.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    btn.textContent = '모두 가려서 저장';
+    $('#batchSum').textContent = `${files.length}장에서 ${n}곳을 가려 zip 파일 하나로 저장했어요. 위치·기기 정보는 모든 사진에서 지웠어요.`;
   }
 
   // ---------- F. 시험 모드: AI가 얼마나 맞았는지 사람이 고친 횟수로 잰다 ----------
@@ -764,6 +907,7 @@
   function setContext(ctx) {
     S.context = ctx;
     [...document.querySelectorAll('#ctx button')].forEach(b => b.classList.toggle('on', b.dataset.v === ctx));
+    S.batch.forEach(r => { if (r.findings !== S.findings) Detect.applyContext(r.findings, ctx); });
     if (S.findings.length && !S.busy) {
       Detect.applyContext(S.findings, ctx);
       renderAll();
@@ -843,7 +987,8 @@
   renderSamples();
   bindCanvas();
   $('label[for="file"]').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
-  $('#file').onchange = e => { const f = e.target.files[0]; if (f) loadFromFile(f); e.target.value = ''; };
+  $('#file').onchange = e => { const fs = e.target.files; if (fs && fs.length) loadFiles(fs); e.target.value = ''; };
+  $('#saveAllBtn').onclick = saveAll;
   $('#camBtn').onclick = openCam;
   $('#camClose').onclick = closeCam;
   $('#snap').onclick = snap;
@@ -903,5 +1048,5 @@
   setInterval(renderNet, 2000);
   // 개발 확인용
   window.__olligi = S;
-  window.__olligiDebug = { findBarcodes, adaptive };
+  window.__olligiDebug = { findBarcodes, adaptive, makeZip, crc32 };
 })();

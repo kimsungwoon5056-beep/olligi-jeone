@@ -327,9 +327,9 @@
       S.photoNo++;
     });
 
+    S.busy = false;
     renderAll();
     renderPerf();
-    S.busy = false;
   }
 
   // ---------- 기울기 바로잡기 ----------
@@ -555,7 +555,7 @@
       $('#sceneBox').classList.remove('hidden');
     } else $('#sceneBox').classList.add('hidden');
     $('#report').classList.remove('hidden');
-    renderTest();
+    recordTest(); // 시험 모드면 분석이 끝난 순간, 그리고 상자를 고칠 때마다 바로 센다
 
     const list = $('#finds');
     list.innerHTML = '';
@@ -701,7 +701,7 @@
   // AI가 찾은 곳 중 사람이 뺀 곳 = 잘못 찾은 것, 사람이 직접 더한 곳 = AI가 놓친 것.
   // 사진이 아니라 숫자만, 이 탭의 메모리에만 남긴다.
   function recordTest() {
-    if (!S.test.on || !S.photoNo) return;
+    if (!S.test.on || !S.photoNo || S.busy) { renderTest(); return; }
     const ai = S.findings.filter(f => f.ai);
     S.test.photos[S.photoNo] = {
       found: ai.length,
@@ -851,7 +851,7 @@
     const on = document.body.classList.toggle('big');
     $('#bigBtn').setAttribute('aria-pressed', on);
   };
-  $('#testToggle').onchange = e => { S.test.on = e.target.checked; renderTest(); };
+  $('#testToggle').onchange = e => { S.test.on = e.target.checked; recordTest(); };
   $('#testCopy').onclick = async () => {
     const t = testSummary();
     const txt = `올리기 전에 시험 결과: 사진 ${t.n}장, AI가 찾은 곳 ${t.found}곳, 잘못 찾음 ${t.wrong}곳, 놓침 ${t.missed}곳, 맞게 찾은 비율 ${t.precision}, 놓치지 않은 비율 ${t.recall}`;

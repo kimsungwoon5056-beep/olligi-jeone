@@ -284,11 +284,25 @@
       if (ocr) {
         const seenLines = new Set();
         const textLines = [];
+        // 글자 상자 상식 검사: OCR이 말풍선 테두리 같은 잡음을 글자로 읽으면 세로로 길쭉한 상자가 생긴다.
+        // 사진 속 글자 높이의 보통값(중앙값)을 구해서, 그보다 3배 넘게 높거나 세로로 더 긴 상자는 버린다.
+        const hs = [];
+        ocr.forEach(d => (d.lines || []).forEach(l => (l.words || []).forEach(w => {
+          const h = w.bbox.y1 - w.bbox.y0;
+          if (h > 3 && /[0-9가-힣A-Za-z]/.test(w.text || '')) hs.push(h);
+        })));
+        hs.sort((a, b) => a - b);
+        const medH = hs.length ? hs[hs.length >> 1] : 30;
+        const saneTextBox = b => {
+          const w = b.x1 - b.x0, h = b.y1 - b.y0;
+          return h <= medH * 3 && w >= h * 0.9 && w <= S.work.width * 0.95;
+        };
         ocr.forEach(data => {
           (data.text || '').split('\n').map(s => s.trim()).filter(s => s.length > 1).forEach(s => {
             if (!seenLines.has(s)) { seenLines.add(s); textLines.push(s); }
           });
           Detect.analyzeLines(data.lines || []).forEach(f => {
+            if (!saneTextBox(f.box)) { console.info('상자 모양이 글자 같지 않아 뺐어요', f.type, f.text); return; }
             const dup = found.some(g => (g.type === f.type || g.text === f.text) && overlap(g.box, f.box) > 0.5);
             if (!dup) found.push(f);
           });
